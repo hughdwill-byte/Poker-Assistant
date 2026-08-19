@@ -2,10 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5" />
   <title>Poker Assistant — Texas Hold'em Odds & Betting Advisor</title>
   <meta name="description" content="Real-time Texas Hold'em win probabilities and betting recommendations that update exactly with the cards on the table." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠️</text></svg>" />
+  <!-- iOS home-screen / PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Poker Assistant" />
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="apple-touch-icon" href="docs/images/apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -40,8 +48,18 @@
       <div class="sim-status" id="sim-status"></div>
     </section>
 
-    <!-- Control panel -->
-    <aside class="panel">
+    <!-- Control panel (becomes a bottom sheet on iPhone) -->
+    <aside class="panel" id="panel">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <span>Advice &amp; settings</span>
+        <button class="btn btn-ghost sheet-close" id="sheet-close" aria-label="Close">Done</button>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn" id="m-next-hand">Next hand</button>
+        <button class="btn" id="m-shuffle">Shuffle</button>
+        <button class="btn btn-ghost" id="m-reset">Clear table</button>
+      </div>
       <section class="rec-card" id="rec-card">
         <div class="rec-label">Recommendation</div>
         <div class="rec-headline" id="rec-headline">Add your cards</div>
@@ -54,15 +72,15 @@
         <h2>Your situation</h2>
         <div class="field">
           <label for="in-pot">Pot (chips already in the middle)</label>
-          <input id="in-pot" type="number" min="0" step="1" value="0" />
+          <input id="in-pot" type="number" inputmode="numeric" min="0" step="1" value="0" />
         </div>
         <div class="field">
           <label for="in-call">To call (chips to match the current bet)</label>
-          <input id="in-call" type="number" min="0" step="1" value="0" />
+          <input id="in-call" type="number" inputmode="numeric" min="0" step="1" value="0" />
         </div>
         <div class="field">
           <label for="in-stack">Your stack (seat marked YOU)</label>
-          <input id="in-stack" type="number" min="0" step="1" value="1000" />
+          <input id="in-stack" type="number" inputmode="numeric" min="0" step="1" value="1000" />
         </div>
         <p class="hint">Click a seat's ⌂ button to mark which seat is you.</p>
       </section>
@@ -99,6 +117,20 @@
       </section>
     </aside>
   </main>
+
+  <!-- Mobile: dimmer behind the bottom sheet -->
+  <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+
+  <!-- Mobile: always-visible recommendation bar (tap to open full advice + settings) -->
+  <button class="rec-bar" id="rec-bar" aria-label="Open betting advice and settings">
+    <span class="rec-bar-dot" id="rec-bar-dot"></span>
+    <span class="rec-bar-text">
+      <b id="rec-bar-action">Add your cards</b>
+      <small id="rec-bar-sub">Tap for advice &amp; settings</small>
+    </span>
+    <span class="rec-bar-eq" id="rec-bar-eq"></span>
+    <span class="rec-bar-chev" aria-hidden="true">⌃</span>
+  </button>
 
   <!-- Card picker modal -->
   <div class="picker-overlay" id="picker" hidden>

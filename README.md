@@ -33,6 +33,11 @@ can host it for free on **GitHub Pages** and use it live at the table.
   removed from the odds across a shoe.
 - **Built for speed.** The simulation runs in a Web Worker so the interface
   never freezes; a full recalculation typically takes **under 100 ms**.
+- **First-class iPhone experience.** A dedicated mobile layout built to Apple
+  HIG standards: safe-area (notch / home-indicator) aware, no zoom-on-focus,
+  a thumb-reachable recommendation bar, an iOS-style bottom sheet for advice
+  and settings, and a two-step card picker with large tap targets. Add it to
+  your Home Screen and it launches full-screen like a native app.
 - **Works offline & on mobile.** Responsive layout, plain HTML/CSS/JS.
 
 ---
@@ -78,6 +83,23 @@ Then open <http://localhost:8080>.
    deck.
 
 ![Heads-up example — pocket Aces](docs/images/screenshot-headsup.png)
+
+### On iPhone
+
+The whole tool is rebuilt for small screens: the felt fits the seats, the
+always-visible bar at the bottom shows the current call (in the thumb zone),
+and tapping it opens a native-style sheet with the full advice and settings.
+The card picker becomes a two-step suit → rank selector with large targets.
+
+<p>
+  <img src="docs/images/mobile-main.png" alt="iPhone table view" width="270" />
+  &nbsp;&nbsp;
+  <img src="docs/images/mobile-picker.png" alt="iPhone card picker" width="270" />
+</p>
+
+**Install to Home Screen (iOS):** open the site in Safari → Share → *Add to
+Home Screen*. It then launches full-screen with its own icon (a web app
+manifest and Apple touch icon are included).
 
 ---
 
@@ -127,9 +149,10 @@ five-of-a-kind case that only multi-deck play can produce.
 ## 🗂️ Project structure
 
 ```
-index.html          Page shell and layout
-css/styles.css      Poker-felt theme, responsive
-js/cards.js         Card encoding + remaining-deck construction
+index.html            Page shell and layout
+manifest.webmanifest  PWA manifest (Home-Screen install)
+css/styles.css        Poker-felt theme, desktop + iPhone layouts
+js/cards.js           Card encoding + remaining-deck construction
 js/evaluator.js     7-card hand evaluator (exact hand ranking)
 js/equity.js        Win/tie/equity engine (exact enumeration + Monte-Carlo)
 js/advice.js        Pot odds, EV and Kelly betting recommendation

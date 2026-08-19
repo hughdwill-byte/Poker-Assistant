@@ -116,12 +116,13 @@
   // ---------- Seat geometry ----------
   function seatPositions(n) {
     // Hero at bottom-centre (i=0), others spread evenly around the ellipse.
+    // Tighter horizontal radius on phones keeps side seats fully on-screen.
+    var narrow = window.matchMedia("(max-width: 700px)").matches;
+    var xR = narrow ? 38 : 44, yR = narrow ? 34 : 40;
     var pos = [];
     for (var i = 0; i < n; i++) {
       var theta = (Math.PI / 2) + (i * 2 * Math.PI / n); // radians, 0 = right, +y down
-      var x = 50 + 44 * Math.cos(theta);
-      var y = 50 + 40 * Math.sin(theta);
-      pos.push({ x: x, y: y });
+      pos.push({ x: 50 + xR * Math.cos(theta), y: 50 + yR * Math.sin(theta) });
     }
     return pos;
   }
@@ -208,6 +209,7 @@
       foot.className = "seat-foot";
       var stack = document.createElement("input");
       stack.className = "seat-stack"; stack.type = "number"; stack.min = "0";
+      stack.setAttribute("inputmode", "numeric");
       stack.value = player.stack;
       stack.addEventListener("input", function () {
         player.stack = Math.max(0, parseInt(stack.value || "0", 10));
@@ -251,25 +253,60 @@
     pickerTitle.textContent = "Choose " + where;
     buildPickerGrid();
     pickerEl.hidden = false;
+    document.body.classList.add("picker-open");
   }
-  function closePicker() { pickerEl.hidden = true; pickerTarget = null; }
+  function closePicker() {
+    pickerEl.hidden = true; pickerTarget = null;
+    document.body.classList.remove("picker-open");
+  }
+
+  var pickerBox = document.querySelector(".picker");
+  var pickerSuit = 3; // remembered suit for the mobile two-step picker
+  function isMobile() { return window.matchMedia("(max-width: 700px)").matches; }
 
   function buildPickerGrid() {
+    // Clear any previous suit selector.
+    var oldSeg = pickerBox.querySelector(".suit-seg");
+    if (oldSeg) oldSeg.remove();
     pickerGrid.innerHTML = "";
     var excludeRef = { current: currentCardOf(pickerTarget) };
-    // Rows = suits, columns = ranks (matches a real deck layout).
-    P.SUITS.forEach(function (suit) {
-      P.RANKS.forEach(function (rank) {
-        var id = P.makeId(rank, suit);
-        var btn = document.createElement("button");
-        btn.className = "pick " + P.SUIT_COLOR[suit];
-        btn.innerHTML = P.RANK_LABEL[rank] + "<br>" + P.SUIT_SYMBOL[suit];
-        var avail = state.decks - usedCount(id, excludeRef);
-        if (avail <= 0) btn.disabled = true;
-        btn.addEventListener("click", function () { assignCard(id); });
-        pickerGrid.appendChild(btn);
+
+    function pickButton(rank, suit, big) {
+      var id = P.makeId(rank, suit);
+      var btn = document.createElement("button");
+      btn.className = "pick " + P.SUIT_COLOR[suit];
+      btn.innerHTML = big
+        ? P.RANK_LABEL[rank] + '<span style="font-size:.7em"> ' + P.SUIT_SYMBOL[suit] + "</span>"
+        : P.RANK_LABEL[rank] + "<br>" + P.SUIT_SYMBOL[suit];
+      if (state.decks - usedCount(id, excludeRef) <= 0) btn.disabled = true;
+      btn.addEventListener("click", function () { assignCard(id); });
+      return btn;
+    }
+
+    if (isMobile()) {
+      // Two-step: choose a suit, then a rank with large targets.
+      pickerBox.classList.add("two-step");
+      var cur = currentCardOf(pickerTarget);
+      if (cur !== null && cur !== undefined) pickerSuit = P.suitOf(cur);
+      var seg = document.createElement("div");
+      seg.className = "suit-seg";
+      P.SUITS.forEach(function (suit) {
+        var b = document.createElement("button");
+        b.className = P.SUIT_COLOR[suit] + (suit === pickerSuit ? " active" : "");
+        b.textContent = P.SUIT_SYMBOL[suit];
+        b.setAttribute("aria-label", P.SUIT_NAME[suit]);
+        b.addEventListener("click", function () { pickerSuit = suit; buildPickerGrid(); });
+        seg.appendChild(b);
       });
-    });
+      pickerBox.insertBefore(seg, pickerGrid);
+      P.RANKS.forEach(function (rank) { pickerGrid.appendChild(pickButton(rank, pickerSuit, true)); });
+    } else {
+      pickerBox.classList.remove("two-step");
+      // Rows = suits, columns = ranks (matches a real deck layout).
+      P.SUITS.forEach(function (suit) {
+        P.RANKS.forEach(function (rank) { pickerGrid.appendChild(pickButton(rank, suit, false)); });
+      });
+    }
   }
   function assignCard(id) {
     if (pickerTarget.type === "board") state.board[pickerTarget.slot] = id;
@@ -403,6 +440,14 @@
       addStat(statsEl, "Kelly stake", Math.max(0, Math.min(1, stats.kelly)) * 100 > 0
         ? (Math.max(0, Math.min(1, stats.kelly)) * 100).toFixed(0) + "% of stack" : "0%");
     }
+    // Mirror onto the mobile bottom bar.
+    var bar = $("rec-bar");
+    bar.className = "rec-bar " + tone;
+    $("rec-bar-action").textContent = headline;
+    $("rec-bar-sub").textContent = res
+      ? (handLabel ? handLabel.replace("Currently: ", "") : "Tap for full advice")
+      : "Tap for advice & settings";
+    $("rec-bar-eq").textContent = res ? (res.equity * 100).toFixed(0) + "%" : "";
   }
   function addStat(parent, k, v) {
     var d = document.createElement("div"); d.className = "stat";
@@ -492,7 +537,58 @@
     $("picker-facedown").addEventListener("click", clearSlot);
     $("picker-clear").addEventListener("click", clearSlot);
     pickerEl.addEventListener("click", function (e) { if (e.target === pickerEl) closePicker(); });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closePicker(); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closePicker(); closeSheet(); } });
+
+    bindSheet();
+  }
+
+  // ---------- Mobile bottom sheet (advice + settings) ----------
+  function openSheet() {
+    $("panel").classList.add("open");
+    $("sheet-backdrop").hidden = false;
+    document.body.classList.add("sheet-open");
+  }
+  function closeSheet() {
+    $("panel").classList.remove("open");
+    $("sheet-backdrop").hidden = true;
+    document.body.classList.remove("sheet-open");
+  }
+  function bindSheet() {
+    $("rec-bar").addEventListener("click", openSheet);
+    $("sheet-close").addEventListener("click", closeSheet);
+    $("sheet-backdrop").addEventListener("click", closeSheet);
+
+    // Mobile table actions (mirrors of the desktop top-bar buttons).
+    $("m-next-hand").addEventListener("click", nextHand);
+    $("m-shuffle").addEventListener("click", shuffle);
+    $("m-reset").addEventListener("click", function () { clearTable(); scheduleAndRender(); });
+
+    // Swipe the sheet down to dismiss.
+    var panel = $("panel"), startY = null;
+    panel.addEventListener("touchstart", function (e) {
+      startY = panel.scrollTop <= 0 ? e.touches[0].clientY : null;
+    }, { passive: true });
+    panel.addEventListener("touchmove", function (e) {
+      if (startY === null) return;
+      var dy = e.touches[0].clientY - startY;
+      panel.style.transform = dy > 0 ? "translateY(" + dy + "px)" : "";
+    }, { passive: true });
+    panel.addEventListener("touchend", function (e) {
+      if (startY === null) return;
+      var dy = e.changedTouches[0].clientY - startY;
+      panel.style.transform = "";
+      if (dy > 90) closeSheet();
+      startY = null;
+    });
+
+    // Re-render when the viewport crosses the mobile breakpoint (seat geometry
+    // and the picker layout both depend on it).
+    var mq = window.matchMedia("(max-width: 700px)");
+    (mq.addEventListener ? mq.addEventListener.bind(mq, "change") : mq.addListener.bind(mq))(function () {
+      render();
+      if (state.lastResults) updateWinBars();
+      if (pickerTarget) buildPickerGrid();
+    });
   }
 
   // ---------- Init ----------

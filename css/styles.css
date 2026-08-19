@@ -23,9 +23,14 @@ html, body { margin: 0; padding: 0; }
 body {
   background: radial-gradient(1200px 600px at 70% -10%, #1b2735, var(--bg));
   color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, system-ui, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   min-height: 100vh;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
 }
+/* Bits that only appear inside the mobile bottom sheet. */
+.sheet-grabber, .sheet-head, .rec-bar, .sheet-actions { display: none; }
 
 /* ---------- Top bar ---------- */
 .topbar {
@@ -253,3 +258,177 @@ body {
 }
 
 .site-foot { text-align: center; color: var(--muted); font-size: 12px; padding: 18px; }
+
+/* =====================================================================
+   iPhone / small-screen experience — Apple HIG oriented
+   - safe-area insets, no zoom-on-focus (16px inputs), thumb-reachable
+     primary action, bottom-sheet advice & settings, native-feel picker.
+   ===================================================================== */
+@media (max-width: 700px) {
+  body { min-height: 100dvh; }
+
+  /* Top bar: compact single row, safe-area aware. */
+  .topbar {
+    padding: calc(env(safe-area-inset-top) + 9px) 12px 9px;
+    padding-left: calc(env(safe-area-inset-left) + 12px);
+    padding-right: calc(env(safe-area-inset-right) + 12px);
+    gap: 8px;
+  }
+  .brand { gap: 9px; min-width: 0; flex: 0 1 auto; }
+  .brand > div { min-width: 0; }
+  .brand-suit { width: 34px; height: 34px; font-size: 21px; border-radius: 9px; flex: 0 0 auto; }
+  .brand h1 { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand p { display: none; }
+  /* Table actions live in the sheet on phones; keep the top bar clean. */
+  .topbar-actions { display: none; }
+  .sheet-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .sheet-actions .btn { padding: 12px 8px; font-size: 13.5px; border-radius: 11px; }
+
+  /* One-column, leave room for the fixed recommendation bar. */
+  .layout {
+    grid-template-columns: 1fr; gap: 14px; padding: 14px;
+    padding-left: calc(env(safe-area-inset-left) + 14px);
+    padding-right: calc(env(safe-area-inset-right) + 14px);
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  /* Taller felt so seats sit comfortably around the ellipse on portrait. */
+  .poker-table { aspect-ratio: 0.84; min-height: 0; border-width: 10px; }
+  .table-center { width: 55%; gap: 8px; }
+  .community { gap: 4px; }
+  .card, .slot { width: 38px; height: 53px; }
+  .card .pip { font-size: 19px; }
+  .card .corner { font-size: 10px; top: 3px; left: 4px; }
+  .slot { font-size: 17px; }
+  .pot { font-size: 13px; padding: 5px 12px; }
+  .deck-info { font-size: 10px; }
+
+  /* Compact seats: name on its own line so it never truncates to "P…". */
+  .seat { width: 82px; padding: 6px; border-radius: 12px; gap: 4px; position: absolute; }
+  .seat-top { flex-wrap: wrap; row-gap: 3px; justify-content: center; }
+  .seat-name { font-size: 12px; flex: 1 1 100%; min-width: 0; padding: 1px 2px;
+    text-align: center; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+  .seat-badges { gap: 4px; margin: 0 auto; }
+  .mini-btn { width: 22px; height: 20px; font-size: 11px; }
+  .card.small { width: 30px; height: 42px; }
+  .card.small .pip { font-size: 15px; }
+  .card.small .corner { font-size: 8.5px; top: 2px; left: 3px; }
+  .seat-cards { gap: 5px; }
+  .winbar { height: 15px; }
+  .winbar > b { font-size: 9.5px; }
+  .seat-foot { gap: 5px; }
+  .seat-stack { flex: 1 1 auto; width: 100%; min-width: 0; font-size: 16px; padding: 3px 5px; text-align: center; }
+  /* Hero is already marked by the gold ring + active ⌂, so drop the YOU chip. */
+  .you-tag { display: none; }
+  .sim-status { font-size: 11px; }
+
+  /* Inputs at 16px so iOS never zooms on focus. */
+  .field input[type="number"], .field select { font-size: 16px; padding: 11px 12px; }
+
+  /* ---- The control panel becomes a bottom sheet ---- */
+  .panel {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+    width: 100%; max-height: 90dvh; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--panel);
+    border-top-left-radius: 22px; border-top-right-radius: 22px;
+    box-shadow: 0 -12px 44px rgba(0,0,0,.55);
+    transform: translateY(110%);
+    transition: transform .34s cubic-bezier(.32,.72,0,1);
+    z-index: 60;
+    padding: 0 16px calc(24px + env(safe-area-inset-bottom));
+    gap: 14px;
+    overscroll-behavior: contain;
+  }
+  .panel.open { transform: translateY(0); }
+  .sheet-grabber {
+    display: block; width: 38px; height: 5px; border-radius: 999px;
+    background: #48505d; margin: 10px auto 2px; flex: 0 0 auto;
+    position: sticky; top: 0;
+  }
+  .sheet-head {
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 12px; background: var(--panel); z-index: 2;
+    padding: 4px 0 10px; font-weight: 700; font-size: 15px;
+    border-bottom: 1px solid var(--line); margin-bottom: 2px;
+  }
+  .sheet-close { color: var(--neutral); font-weight: 600; }
+
+  /* ---- Always-visible recommendation bar (thumb zone) ---- */
+  .rec-bar {
+    display: flex; align-items: center; gap: 11px;
+    position: fixed; left: 12px; right: 12px;
+    left: calc(env(safe-area-inset-left) + 12px);
+    right: calc(env(safe-area-inset-right) + 12px);
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 55; width: auto; text-align: left; cursor: pointer;
+    padding: 12px 14px; border-radius: 18px;
+    color: var(--text);
+    background: rgba(24,29,38,.86);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,.10);
+    border-left: 5px solid var(--neutral);
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  .rec-bar.good { border-left-color: var(--good); }
+  .rec-bar.bad { border-left-color: var(--bad); }
+  .rec-bar.neutral { border-left-color: var(--neutral); }
+  .rec-bar-dot { display: none; }
+  .rec-bar-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+  .rec-bar-text b { font-size: 16px; font-weight: 700; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .rec-bar.good .rec-bar-text b { color: var(--good); }
+  .rec-bar.bad .rec-bar-text b { color: var(--bad); }
+  .rec-bar.neutral .rec-bar-text b { color: var(--neutral); }
+  .rec-bar-text small { font-size: 11.5px; color: var(--muted); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .rec-bar-eq { font-size: 20px; font-weight: 800; letter-spacing: -.5px; }
+  .rec-bar-chev { color: var(--muted); font-size: 16px; }
+
+  body.sheet-open .rec-bar,
+  body.picker-open .rec-bar { opacity: 0; pointer-events: none; transform: translateY(8px); }
+  body.sheet-open { overflow: hidden; }
+  .picker-overlay { z-index: 70; }
+
+  .sheet-backdrop {
+    position: fixed; inset: 0; z-index: 58;
+    background: rgba(0,0,0,.5); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  }
+  .sheet-backdrop[hidden] { display: none; }
+
+  .site-foot { display: none; }
+
+  /* ---- Card picker as a bottom sheet with big, two-step targets ---- */
+  .picker-overlay { align-items: flex-end; padding: 0; }
+  .picker {
+    width: 100%; border-radius: 22px 22px 0 0;
+    padding: 12px 16px calc(20px + env(safe-area-inset-bottom));
+    animation: sheetUp .3s cubic-bezier(.32,.72,0,1);
+  }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .picker-head { font-size: 16px; }
+  .picker.two-step .suit-seg {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px;
+  }
+  .picker.two-step .suit-seg button {
+    padding: 12px 0; font-size: 24px; border-radius: 12px;
+    background: var(--panel-2); border: 1px solid var(--line); cursor: pointer;
+  }
+  .picker.two-step .suit-seg button.red { color: var(--card-red); }
+  .picker.two-step .suit-seg button.black { color: #e8edf3; }
+  .picker.two-step .suit-seg button.active { outline: 2px solid var(--accent); background: #2a3140; }
+  .picker.two-step .picker-grid { grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .picker.two-step .pick {
+    aspect-ratio: 1/1; font-size: 20px; border-radius: 12px; min-height: 52px;
+  }
+  .picker-actions .btn { flex: 1; padding: 13px; font-size: 15px; border-radius: 12px; }
+}
+
+/* Very small phones. */
+@media (max-width: 380px) {
+  .seat { width: 78px; }
+  .card.small { width: 27px; height: 38px; }
+  .topbar-actions .btn { padding: 7px 9px; font-size: 12px; }
+}
