@@ -116,9 +116,16 @@
   // ---------- Seat geometry ----------
   function seatPositions(n) {
     // Hero at bottom-centre (i=0), others spread evenly around the ellipse.
-    // Tighter horizontal radius on phones keeps side seats fully on-screen.
+    // On phones seats shrink as the table fills, so we can push the ring out
+    // toward the rim for more spacing without clipping or centre overlap.
     var narrow = window.matchMedia("(max-width: 700px)").matches;
-    var xR = narrow ? 39 : 44, yR = narrow ? 34 : 40;
+    var xR = 44, yR = 40;
+    if (narrow) {
+      if (n <= 4) { xR = 39; yR = 36; }
+      else if (n <= 6) { xR = 40; yR = 38; }
+      else if (n <= 8) { xR = 41; yR = 39; }
+      else { xR = 42; yR = 40; }
+    }
     var pos = [];
     for (var i = 0; i < n; i++) {
       var theta = (Math.PI / 2) + (i * 2 * Math.PI / n); // radians, 0 = right, +y down
@@ -130,6 +137,15 @@
   // ---------- Render ----------
   function render() {
     ensurePlayers();
+
+    // Scale the seats to the table size on phones (more players → smaller seats).
+    if (window.matchMedia("(max-width: 700px)").matches) {
+      var n = state.numPlayers;
+      tableEl.setAttribute("data-seat",
+        n <= 4 ? "lg" : n <= 6 ? "md" : n <= 8 ? "sm" : "xs");
+    } else {
+      tableEl.removeAttribute("data-seat");
+    }
 
     // Community cards.
     communityEl.innerHTML = "";

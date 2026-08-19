@@ -85,8 +85,11 @@ body {
 .table-center {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
   display: flex; flex-direction: column; align-items: center; gap: 12px; width: 70%;
+  /* The centre layer paints above the seats (so the board is never hidden) but
+     must not swallow taps aimed at seat cards beneath its transparent area. */
+  pointer-events: none;
 }
-.community { display: flex; gap: 8px; justify-content: center; flex-wrap: nowrap; }
+.community { display: flex; gap: 8px; justify-content: center; flex-wrap: nowrap; pointer-events: auto; }
 .pot-info { text-align: center; }
 .pot {
   background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.12);
@@ -312,31 +315,43 @@ body {
   /* Taller felt so seats sit comfortably around the ellipse on portrait. */
   .poker-table { aspect-ratio: 0.84; min-height: 0; border-width: 10px; }
   /* The board sits on its own layer ABOVE the seats so the middle cards are
-     always fully visible, even where a side-seat box reaches toward centre. */
-  .table-center { width: 52%; gap: 8px; z-index: 6; }
-  .community { gap: 4px; }
-  .card, .slot { width: 36px; height: 50px; }
-  .card .pip { font-size: 18px; }
-  .card .corner { font-size: 9.5px; top: 3px; left: 4px; }
-  .slot { font-size: 16px; }
+     always fully visible. Its cards scale with screen width so the five-card
+     row always fits in the gap between the left and right seats. */
+  .table-center { width: 88%; gap: 7px; z-index: 6; }
+  .community { gap: min(5px, 1.3vw); }
+  .card, .slot { width: min(38px, 8.8vw); height: min(52px, 12.1vw); }
+  .card .pip { font-size: min(19px, 4.6vw); }
+  .card .corner { font-size: min(10px, 2.4vw); top: 3px; left: 4px; }
+  .slot { font-size: min(16px, 4vw); }
   .pot { font-size: 13px; padding: 5px 12px; }
   .deck-info { font-size: 10px; }
 
-  /* Compact seats: name on its own line so it never truncates to "P…". */
-  .seat { width: 80px; padding: 6px; border-radius: 12px; gap: 4px; position: absolute; z-index: 2; }
-  .seat-top { flex-wrap: wrap; row-gap: 3px; justify-content: center; }
-  .seat-name { font-size: 12px; flex: 1 1 100%; min-width: 0; padding: 1px 2px;
+  /* Seats scale with how many are at the table so a full ring always fits.
+     Sizes come from CSS variables; JS sets data-seat = lg / md / sm. */
+  .poker-table { --sw: 84px; --cw: 30px; --ch: 42px; --nf: 12px; --bh: 20px; --wb: 15px; --gap: 5px; }
+  .poker-table[data-seat="md"] { --sw: 74px; --cw: 26px; --ch: 37px; --nf: 11px; --bh: 19px; --wb: 14px; --gap: 4px; }
+  .poker-table[data-seat="sm"] { --sw: 62px; --cw: 22px; --ch: 30px; --nf: 10px; --bh: 17px; --wb: 12px; --gap: 3px; aspect-ratio: 0.80; }
+  .poker-table[data-seat="xs"] { --sw: 54px; --cw: 19px; --ch: 26px; --nf: 9px; --bh: 15px; --wb: 10px; --gap: 2px; aspect-ratio: 0.74; }
+
+  .seat { width: var(--sw); padding: 5px; border-radius: 12px; gap: 3px; position: absolute; z-index: 2; }
+  .seat-top { flex-wrap: wrap; row-gap: 2px; justify-content: center; }
+  .seat-name { font-size: var(--nf); flex: 1 1 100%; min-width: 0; padding: 0 2px;
     text-align: center; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .seat-badges { gap: 4px; margin: 0 auto; }
-  .mini-btn { width: 22px; height: 20px; font-size: 11px; }
-  .card.small { width: 30px; height: 42px; }
-  .card.small .pip { font-size: 15px; }
-  .card.small .corner { font-size: 8.5px; top: 2px; left: 3px; }
-  .seat-cards { gap: 5px; }
-  .winbar { height: 15px; }
-  .winbar > b { font-size: 9.5px; }
-  .seat-foot { gap: 5px; }
-  .seat-stack { flex: 1 1 auto; width: 100%; min-width: 0; font-size: 16px; padding: 3px 5px; text-align: center; }
+  .mini-btn { width: calc(var(--bh) + 2px); height: var(--bh); font-size: calc(var(--bh) * 0.55); }
+  .card.small, .slot.small { width: var(--cw); height: var(--ch); }
+  .slot.small { font-size: calc(var(--ch) * 0.42); }
+  .card.small .pip { font-size: calc(var(--ch) * 0.36); }
+  .card.small .corner { font-size: calc(var(--ch) * 0.2); top: 2px; left: 3px; }
+  .seat-cards { gap: var(--gap); }
+  .winbar { height: var(--wb); }
+  .winbar > b { font-size: calc(var(--wb) * 0.62); }
+
+  /* Only the hero shows a stack (the only stack the maths uses); this keeps
+     opponent seats short so a 9–10 handed ring never overlaps. */
+  .seat:not(.hero) .seat-foot { display: none; }
+  .seat.hero .seat-foot { gap: 5px; margin-top: 1px; }
+  .seat.hero .seat-stack { flex: 1 1 auto; width: 100%; min-width: 0; font-size: 16px; padding: 3px 5px; text-align: center; }
   /* Hero is already marked by the gold ring + active ⌂, so drop the YOU chip. */
   .you-tag { display: none; }
   .sim-status { font-size: 11px; }
