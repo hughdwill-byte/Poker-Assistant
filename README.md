@@ -23,6 +23,10 @@ can host it for free on **GitHub Pages** and use it live at the table.
   - When only the board runout is unknown, the result is the **true
     probability** from full enumeration of every possible runout.
   - Otherwise a fast **Monte-Carlo simulation** (10k–300k deals) is used.
+- **Best / worst outlook.** For your hand it shows the strongest and weakest
+  five-card hand you can still finish with by the river — your ceiling and
+  floor — found by enumerating every remaining board runout from the unseen
+  deck (e.g. *Best: Royal Flush · Worst: Ace high*).
 - **Betting recommendation.** Combines your equity with the pot, the price to
   call and your stack to recommend an action and a **bet size**, using **pot
   odds**, **expected value (EV)** and the **Kelly criterion** (the bet fraction

@@ -216,6 +216,23 @@ body {
 .rec-card.bad .rec-headline { color: var(--bad); }
 .rec-card.neutral .rec-headline { color: var(--neutral); }
 .rec-sub { color: var(--accent); font-weight: 600; font-size: 13px; min-height: 16px; }
+
+/* Best / worst outlook for the hero's hand */
+.rec-outlook { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.rec-outlook[hidden] { display: none; }
+.outlook-row {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 8px;
+  background: rgba(255,255,255,.04); border: 1px solid var(--line);
+  border-left: 4px solid var(--line); border-radius: 9px; padding: 6px 10px;
+}
+.outlook-row.good { border-left-color: var(--good); }
+.outlook-row.bad { border-left-color: var(--bad); }
+.ol-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.ol-val { font-size: 13.5px; font-weight: 700; }
+.outlook-row.good .ol-val { color: var(--good); }
+.outlook-row.bad .ol-val { color: var(--bad); }
+.ol-need { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
 .rec-reasons { margin: 10px 0 0; padding-left: 18px; color: #cbd4df; font-size: 12.5px; }
 .rec-reasons li { margin-bottom: 3px; }
 .rec-stats {

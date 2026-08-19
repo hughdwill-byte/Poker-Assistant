@@ -384,8 +384,7 @@
   // ---------- Recommendation ----------
   function updateRecommendation() {
     var hero = state.players[state.heroIndex];
-    var recCard = $("rec-card"), headline = $("rec-headline"),
-        handEl = $("rec-hand"), reasonsEl = $("rec-reasons"), statsEl = $("rec-stats");
+    $("rec-outlook").hidden = true;
 
     if (!hero.active) {
       setRec("neutral", "You have folded", "", ["Reactivate your seat (✓) to get advice."], null);
@@ -416,6 +415,60 @@
     }
 
     setRec(adv.tone, adv.headline, handLabel, adv.reasons, res, adv.stats);
+    renderOutlook(knownCards(hero), board);
+  }
+
+  // Best and worst hands the hero can still finish with by the river, found by
+  // enumerating every remaining board completion from the unseen deck.
+  function computeBestWorst(heroCards, boardKnown) {
+    var missing = 5 - boardKnown.length;
+    if (missing <= 0) return null;                 // board already complete
+    var pool = P.buildRemaining(state.decks, allUsedCards());
+    if (P.nCk(pool.length, missing) > 200000) return null; // too many runouts (pre-flop)
+
+    var bestScore = -1, worstScore = Infinity, bestDraw = null, worstDraw = null;
+    var draw = new Array(missing);
+    var seven = [heroCards[0], heroCards[1], 0, 0, 0, 0, 0];
+    (function rec(start, depth) {
+      if (depth === missing) {
+        for (var b = 0; b < boardKnown.length; b++) seven[2 + b] = boardKnown[b];
+        for (var d = 0; d < missing; d++) seven[2 + boardKnown.length + d] = draw[d];
+        var s = P.evaluate7(seven);
+        if (s > bestScore) { bestScore = s; bestDraw = draw.slice(); }
+        if (s < worstScore) { worstScore = s; worstDraw = draw.slice(); }
+        return;
+      }
+      for (var i = start; i <= pool.length - (missing - depth); i++) {
+        draw[depth] = pool[i]; rec(i + 1, depth + 1);
+      }
+    })(0, 0);
+    return { best: { score: bestScore, cards: bestDraw }, worst: { score: worstScore, cards: worstDraw } };
+  }
+
+  function renderOutlook(heroCards, board) {
+    var el = $("rec-outlook");
+    if (heroCards.length < 2 || board.length < 3 || board.length >= 5) { el.hidden = true; return; }
+    var bw = computeBestWorst(heroCards, board);
+    if (!bw) { el.hidden = true; return; }
+    var need = 5 - board.length;
+    el.innerHTML = "";
+    el.appendChild(outlookRow("good", "Best case", P.handName(bw.best.score), bw.best.cards, need));
+    el.appendChild(outlookRow("bad", "Worst case", P.handName(bw.worst.score), bw.worst.cards, need));
+    el.hidden = false;
+  }
+
+  function outlookRow(tone, label, handText, cards, need) {
+    var row = document.createElement("div");
+    row.className = "outlook-row " + tone;
+    var lbl = document.createElement("span");
+    lbl.className = "ol-lbl"; lbl.textContent = label;
+    var val = document.createElement("span");
+    val.className = "ol-val"; val.textContent = handText;
+    var needEl = document.createElement("span");
+    needEl.className = "ol-need";
+    needEl.textContent = (need === 1 ? "if " : "e.g. ") + cards.map(P.cardLabel).join(" ");
+    row.appendChild(lbl); row.appendChild(val); row.appendChild(needEl);
+    return row;
   }
 
   function setRec(tone, headline, handLabel, reasons, res, stats) {
