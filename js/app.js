@@ -118,7 +118,7 @@
     // Hero at bottom-centre (i=0), others spread evenly around the ellipse.
     // Tighter horizontal radius on phones keeps side seats fully on-screen.
     var narrow = window.matchMedia("(max-width: 700px)").matches;
-    var xR = narrow ? 38 : 44, yR = narrow ? 34 : 40;
+    var xR = narrow ? 39 : 44, yR = narrow ? 34 : 40;
     var pos = [];
     for (var i = 0; i < n; i++) {
       var theta = (Math.PI / 2) + (i * 2 * Math.PI / n); // radians, 0 = right, +y down
