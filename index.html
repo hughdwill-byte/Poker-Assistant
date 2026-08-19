@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Poker Assistant — Texas Hold'em Odds & Betting Advisor</title>
+  <meta name="description" content="Real-time Texas Hold'em win probabilities and betting recommendations that update exactly with the cards on the table." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠️</text></svg>" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-suit">♠</span>
+      <div>
+        <h1>Poker&nbsp;Assistant</h1>
+        <p>Texas Hold'em odds &amp; betting advisor</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-next-hand" class="btn" title="Muck the current cards and deal a fresh hand (keeps them dead until the next shuffle)">Next hand</button>
+      <button id="btn-shuffle" class="btn" title="Return every card to the deck">Shuffle</button>
+      <button id="btn-reset" class="btn btn-ghost" title="Clear all cards on the table">Clear table</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- The felt -->
+    <section class="table-wrap">
+      <div class="poker-table" id="table">
+        <div class="table-center">
+          <div class="community" id="community"></div>
+          <div class="pot-info">
+            <div class="pot" id="pot-display">Pot 0</div>
+            <div class="deck-info" id="deck-info"></div>
+          </div>
+        </div>
+        <!-- seats injected here -->
+      </div>
+      <div class="sim-status" id="sim-status"></div>
+    </section>
+
+    <!-- Control panel -->
+    <aside class="panel">
+      <section class="rec-card" id="rec-card">
+        <div class="rec-label">Recommendation</div>
+        <div class="rec-headline" id="rec-headline">Add your cards</div>
+        <div class="rec-sub" id="rec-hand"></div>
+        <ul class="rec-reasons" id="rec-reasons"></ul>
+        <div class="rec-stats" id="rec-stats"></div>
+      </section>
+
+      <section class="control-group">
+        <h2>Your situation</h2>
+        <div class="field">
+          <label for="in-pot">Pot (chips already in the middle)</label>
+          <input id="in-pot" type="number" min="0" step="1" value="0" />
+        </div>
+        <div class="field">
+          <label for="in-call">To call (chips to match the current bet)</label>
+          <input id="in-call" type="number" min="0" step="1" value="0" />
+        </div>
+        <div class="field">
+          <label for="in-stack">Your stack (seat marked YOU)</label>
+          <input id="in-stack" type="number" min="0" step="1" value="1000" />
+        </div>
+        <p class="hint">Click a seat's ⌂ button to mark which seat is you.</p>
+      </section>
+
+      <section class="control-group">
+        <h2>Game settings</h2>
+        <div class="field">
+          <label for="in-players">Players at the table: <b id="players-val">6</b></label>
+          <input id="in-players" type="range" min="2" max="10" step="1" value="6" />
+        </div>
+        <div class="field">
+          <label for="in-decks">Number of decks: <b id="decks-val">1</b></label>
+          <input id="in-decks" type="range" min="1" max="8" step="1" value="1" />
+        </div>
+        <div class="field">
+          <label for="in-shuffle">Hands played before shuffling: <b id="shuffle-val">1</b></label>
+          <input id="in-shuffle" type="range" min="1" max="20" step="1" value="1" />
+          <p class="hint" id="shoe-hint"></p>
+        </div>
+        <div class="field">
+          <label for="in-quality">Calculation quality</label>
+          <select id="in-quality">
+            <option value="10000">Fast (10k sims)</option>
+            <option value="40000" selected>Balanced (40k sims)</option>
+            <option value="120000">Precise (120k sims)</option>
+            <option value="300000">Max (300k sims)</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="control-group legend">
+        <h2>How the odds work</h2>
+        <p>Every unknown card is drawn from the <b>actual remaining deck</b> — known hole cards, the board, and mucked cards are removed first, so probabilities update exactly as cards appear. When only the board runout is unknown the result is computed by <b>exact enumeration</b>; otherwise a fast Monte-Carlo simulation is used. <a href="https://www.pokerstrategy.com/strategy/various-poker/texas-holdem-probabilities/" target="_blank" rel="noopener">Reference probabilities</a>.</p>
+      </section>
+    </aside>
+  </main>
+
+  <!-- Card picker modal -->
+  <div class="picker-overlay" id="picker" hidden>
+    <div class="picker">
+      <div class="picker-head">
+        <span id="picker-title">Choose a card</span>
+        <button class="btn btn-ghost" id="picker-close">✕</button>
+      </div>
+      <div class="picker-grid" id="picker-grid"></div>
+      <div class="picker-actions">
+        <button class="btn" id="picker-facedown">Face down / unknown</button>
+        <button class="btn btn-ghost" id="picker-clear">Clear slot</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-foot">
+    <span>Built for learning &amp; live play assistance. Odds are exact given the information you enter.</span>
+  </footer>
+
+  <!-- Engine (also runs inside the Web Worker) -->
+  <script src="js/cards.js"></script>
+  <script src="js/evaluator.js"></script>
+  <script src="js/equity.js"></script>
+  <script src="js/advice.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
