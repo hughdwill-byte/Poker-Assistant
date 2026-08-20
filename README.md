@@ -23,6 +23,10 @@ can host it for free on **GitHub Pages** and use it live at the table.
   - When only the board runout is unknown, the result is the **true
     probability** from full enumeration of every possible runout.
   - Otherwise a fast **Monte-Carlo simulation** (10k–300k deals) is used.
+- **Watch mode (beta).** Read a shared browser tab or window **live** and fill
+  your cards and the board automatically, so you barely type anything. Uses the
+  Screen Capture API — it can watch a *different* site than this app. Desktop
+  only, and intended for play-money / practice / replay use.
 - **Best / worst outlook.** For your hand it shows the strongest and weakest
   five-card hand you can still finish with by the river — your ceiling and
   floor — found by enumerating every remaining board runout from the unseen
@@ -107,6 +111,35 @@ manifest and Apple touch icon are included).
 
 ---
 
+## 👁 Watch mode — read the table automatically (beta)
+
+Instead of typing cards, let the app **read them off another window**. It uses
+the browser's Screen Capture API (`getDisplayMedia`), so it can watch a
+different site/tab than the app itself and update the odds live.
+
+![Watch mode](docs/images/watch-mode.png)
+
+**How to use it** (desktop Chrome / Edge / Firefox):
+1. Click **👁 Watch**, then **Share a tab / window** and pick your poker window.
+2. **Calibrate once:** click a card box below the preview (e.g. *Your card 1*),
+   then drag a rectangle over that card in the preview. Do the same for your two
+   cards and the five board spots. Boxes are saved for next time.
+3. Click **Start watching.** When it meets a card it doesn't recognise it shows
+   the crop and asks you to label it **once**; after that it's automatic.
+4. Your cards and the board now update live in the table. Enter chips/bets in
+   the main panel as usual.
+
+**Honest limits.** This is a heuristic template matcher, not a trained model:
+its accuracy depends on your calibration and the cards you teach it, and it can
+misread — always glance at the recognised cards (shown as a live strip in the
+panel). It reads **your cards and the board** (the big time-saver); reading
+opponents' exact bet amounts by generic vision isn't attempted. It needs a
+desktop browser (iOS Safari can't screen-share) and it never acts for you — it
+only fills in what you'd otherwise type. Use it for play-money, practice, or
+hand-replay study, and follow the rules of any site you're on.
+
+---
+
 ## 🧮 The maths (and why it's trustworthy)
 
 Let `p` be your equity — your probability of winning the pot, with ties counted
@@ -162,6 +195,7 @@ js/equity.js        Win/tie/equity engine (exact enumeration + Monte-Carlo)
 js/advice.js        Pot odds, EV and Kelly betting recommendation
 js/worker.js        Runs the simulation off the main thread
 js/app.js           UI, state and the poker-table view
+js/watch.js         Watch mode: live screen-capture card recognition
 test/engine.test.js Dependency-free correctness suite (npm test)
 ```
 

@@ -660,6 +660,49 @@
     });
   }
 
+  // ---------- Public API (used by Watch mode / external feeders) ----------
+  // A "reading" may set any of: hero cards, board cards, player active flags.
+  // Values: a card id sets it, null clears it, undefined leaves it untouched
+  // (so an uncertain region never clobbers a manual entry).
+  function applyReading(reading) {
+    var changed = false, i;
+    if (reading.hero) {
+      var hero = state.players[state.heroIndex];
+      for (i = 0; i < 2; i++) {
+        var hv = reading.hero[i];
+        if (hv !== undefined && hero.cards[i] !== hv) { hero.cards[i] = hv; changed = true; }
+      }
+    }
+    if (reading.board) {
+      for (i = 0; i < 5; i++) {
+        var bv = reading.board[i];
+        if (bv !== undefined && state.board[i] !== bv) { state.board[i] = bv; changed = true; }
+      }
+    }
+    if (reading.actives) {
+      reading.actives.forEach(function (a) {
+        var pl = state.players[a.index];
+        if (pl && pl.active !== a.active) { pl.active = a.active; changed = true; }
+      });
+    }
+    if (changed) { render(); scheduleCompute(); }
+    return changed;
+  }
+
+  window.PokerAssistant = {
+    applyReading: applyReading,
+    makeId: function (rank, suit) { return P.makeId(rank, suit); },
+    cardLabel: function (id) { return P.cardLabel(id); },
+    getInfo: function () { return { heroIndex: state.heroIndex, numPlayers: state.numPlayers }; },
+    setPlayerCount: function (n) {
+      n = Math.max(2, Math.min(10, n | 0));
+      if (n === state.numPlayers) return;
+      state.numPlayers = n;
+      $("in-players").value = n; $("players-val").textContent = n;
+      render(); scheduleCompute();
+    },
+  };
+
   // ---------- Init ----------
   function init() {
     ensurePlayers();
