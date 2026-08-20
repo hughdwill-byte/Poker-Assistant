@@ -121,22 +121,27 @@ different site/tab than the app itself and update the odds live.
 
 **How to use it** (desktop Chrome / Edge / Firefox):
 1. Click **👁 Watch**, then **Share a tab / window** and pick your poker window.
-2. **Calibrate once:** click a card box below the preview (e.g. *Your card 1*),
-   then drag a rectangle over that card in the preview. Do the same for your two
-   cards and the five board spots. Boxes are saved for next time.
-3. Click **Start watching.** When it meets a card it doesn't recognise it shows
-   the crop and asks you to label it **once**; after that it's automatic.
-4. Your cards and the board now update live in the table. Enter chips/bets in
-   the main panel as usual.
+2. **Calibrate once:** click a box below the preview (e.g. *Your card 1*), then
+   drag a rectangle over it. Do this for your two cards, the five board spots,
+   and optionally the **Pot** and **My-stack** numbers. Boxes are saved.
+3. Click **Start watching.** When it meets a card *or digit* it doesn't know it
+   shows the crop and asks you to label it **once**; after that it's automatic.
+4. **Close the panel with ✕** — it keeps watching in the background (a
+   **● Watching** pill reopens it) so you can see the main table update live:
+   your cards, the board, the pot, and your stack all fill in, and a big
+   **action banner** under your cards shows FOLD / CHECK / CALL / BET.
+5. Mark the **dealer** with the **D** button on a seat and the advice shows your
+   table position (button / blinds / cutoff …).
 
 **Honest limits.** This is a heuristic template matcher, not a trained model:
-its accuracy depends on your calibration and the cards you teach it, and it can
-misread — always glance at the recognised cards (shown as a live strip in the
-panel). It reads **your cards and the board** (the big time-saver); reading
-opponents' exact bet amounts by generic vision isn't attempted. It needs a
-desktop browser (iOS Safari can't screen-share) and it never acts for you — it
-only fills in what you'd otherwise type. Use it for play-money, practice, or
-hand-replay study, and follow the rules of any site you're on.
+accuracy depends on your calibration and what you teach it, and it can misread —
+glance at the live strip in the panel. It reads **your cards, the board, the pot
+and your stack** (the numbers that drive the maths). Reading every opponent's
+stack and auto-detecting the dealer button by vision aren't done yet (set the D
+manually). It needs a desktop browser (iOS Safari can't screen-share) and it
+never acts for you — it only fills in what you'd otherwise type. Use it for
+play-money, practice, or hand-replay study, and follow the rules of any site
+you're on.
 
 ---
 

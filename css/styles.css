@@ -533,3 +533,57 @@ body {
   .teach-grid { grid-template-columns: repeat(7, 1fr); }
   .watch-clearbtns { margin-left: 0; }
 }
+
+/* =====================================================================
+   Big obvious action banner (right under the table / hero cards)
+   ===================================================================== */
+.action-banner {
+  display: flex; align-items: baseline; justify-content: center; gap: 12px;
+  margin: 2px auto 0; padding: 12px 20px; border-radius: 14px;
+  border: 1px solid var(--line); border-bottom: 4px solid var(--neutral);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--shadow); max-width: 520px; width: 100%;
+}
+.action-banner[hidden] { display: none; }
+.action-banner.good { border-bottom-color: var(--good); }
+.action-banner.bad { border-bottom-color: var(--bad); }
+.action-banner.neutral { border-bottom-color: var(--neutral); }
+.action-verb {
+  font-size: 30px; font-weight: 900; letter-spacing: .5px; line-height: 1;
+  text-transform: uppercase;
+}
+.action-banner.good .action-verb { color: var(--good); }
+.action-banner.bad .action-verb { color: var(--bad); }
+.action-banner.neutral .action-verb { color: var(--neutral); }
+.action-meta { font-size: 13px; color: var(--muted); font-weight: 600; }
+
+@media (max-width: 700px) {
+  .action-banner { padding: 10px 16px; border-radius: 12px; }
+  .action-verb { font-size: 24px; }
+  .action-meta { font-size: 12px; }
+}
+
+/* Watch mode: keep-alive minimised state + floating pill + numeric bits */
+.watch-overlay.min {
+  display: block; position: fixed; left: 0; top: 0; width: 2px; height: 2px;
+  padding: 0; overflow: hidden; opacity: 0; pointer-events: none;
+  background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.watch-pill {
+  position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 85; display: inline-flex; align-items: center; gap: 8px;
+  background: var(--good); color: #0b1b10; font-weight: 800; font-size: 13px;
+  border: none; border-radius: 999px; padding: 10px 16px; cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.watch-pill[hidden] { display: none; }
+.watch-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: #0b1b10; animation: watchpulse 1.1s infinite; }
+@keyframes watchpulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.watch-chip.num.set { color: var(--accent); border-color: rgba(245,185,59,.5); }
+.strip-num {
+  padding: 5px 9px; border-radius: 7px; background: rgba(255,255,255,.06);
+  border: 1px solid var(--line); color: var(--text); font-weight: 700; font-size: 12px;
+}
+.strip-num.q { color: var(--accent); border-color: var(--accent); }
+.teach-grid.digit { grid-template-columns: repeat(7, 1fr); }
+.teach-grid.digit .teach-pick { font-size: 15px; padding: 8px 0; }

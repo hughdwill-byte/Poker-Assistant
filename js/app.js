@@ -20,6 +20,7 @@
     board: [null, null, null, null, null], // slot -> card id or null (unknown)
     dead: [],                               // mucked cards, removed until shuffle
     players: [],                            // { name, cards:[id|null,id|null], active, stack }
+    dealer: null,                           // seat index with the dealer button (for position)
     lastResults: null,
   };
 
@@ -190,7 +191,10 @@
       var foldBtn = miniBtn(player.active ? "✓" : "✕", player.active, player.active ? "Active — click to fold" : "Folded — click to reactivate", function () {
         player.active = !player.active; scheduleAndRender();
       });
-      badges.appendChild(heroBtn); badges.appendChild(foldBtn);
+      var dealerBtn = miniBtn("D", idx === state.dealer, "Mark the dealer button (sets table position)", function () {
+        state.dealer = (state.dealer === idx) ? null : idx; scheduleAndRender();
+      });
+      badges.appendChild(heroBtn); badges.appendChild(foldBtn); badges.appendChild(dealerBtn);
       top.appendChild(name); top.appendChild(badges);
       seat.appendChild(top);
 
@@ -404,14 +408,20 @@
 
     if (!hero.active) {
       setRec("neutral", "You have folded", "", ["Reactivate your seat (✓) to get advice."], null);
+      setBanner("neutral", "FOLDED", "");
       return;
     }
     var res = state.lastResults && state.lastResults[state.heroIndex];
-    if (!res) { setRec("neutral", "Add your cards", "", ["Click your seat's cards to enter your hand."], null); return; }
+    if (!res) {
+      setRec("neutral", "Add your cards", "", ["Click your seat's cards to enter your hand."], null);
+      setBanner("neutral", "ADD CARDS", "");
+      return;
+    }
     if (knownCards(hero).length < 2) {
       setRec("neutral", (res.equity * 100).toFixed(1) + "% to win", "",
         ["Enter both of your hole cards for a betting recommendation.",
          "Current number is an average over all hands you could be holding."], res);
+      setBanner("neutral", (res.equity * 100).toFixed(0) + "%", "enter both your cards");
       return;
     }
 
@@ -431,7 +441,34 @@
     }
 
     setRec(adv.tone, adv.headline, handLabel, adv.reasons, res, adv.stats);
+    var verb = adv.action + (adv.amount ? " " + adv.amount : "");
+    var meta = (res.equity * 100).toFixed(0) + "% to win" + positionNote();
+    setBanner(adv.tone, verb, meta);
     renderOutlook(knownCards(hero), board);
+  }
+
+  // Short position note from the dealer button, if we know it.
+  function positionNote() {
+    if (state.dealer == null) return "";
+    var n = state.numPlayers, hero = state.heroIndex;
+    var seatsAfterButton = (hero - state.dealer + n) % n; // 0 = button
+    var label;
+    if (seatsAfterButton === 0) label = "on the button";
+    else if (seatsAfterButton === 1) label = "small blind";
+    else if (seatsAfterButton === 2) label = "big blind";
+    else if (seatsAfterButton >= n - 1) label = "cutoff";
+    else if (seatsAfterButton <= Math.floor(n / 3) + 2) label = "early position";
+    else label = "middle position";
+    return " · " + label;
+  }
+
+  function setBanner(tone, verb, meta) {
+    var banner = $("action-banner");
+    if (!banner) return;
+    banner.hidden = false;
+    banner.className = "action-banner " + tone;
+    $("action-verb").textContent = verb;
+    $("action-meta").textContent = meta || "";
   }
 
   // Best and worst hands the hero can still finish with by the river, found by
@@ -684,6 +721,26 @@
         var pl = state.players[a.index];
         if (pl && pl.active !== a.active) { pl.active = a.active; changed = true; }
       });
+    }
+    if (typeof reading.numPlayers === "number") {
+      var n = Math.max(2, Math.min(10, reading.numPlayers | 0));
+      if (n !== state.numPlayers) {
+        state.numPlayers = n; $("in-players").value = n; $("players-val").textContent = n;
+        changed = true;
+      }
+    }
+    if (typeof reading.pot === "number" && reading.pot >= 0 && state.pot !== reading.pot) {
+      state.pot = reading.pot; $("in-pot").value = reading.pot; changed = true;
+    }
+    if (typeof reading.toCall === "number" && reading.toCall >= 0 && state.toCall !== reading.toCall) {
+      state.toCall = reading.toCall; $("in-call").value = reading.toCall; changed = true;
+    }
+    if (typeof reading.stack === "number" && reading.stack >= 0) {
+      var hp = state.players[state.heroIndex];
+      if (hp.stack !== reading.stack) { hp.stack = reading.stack; syncStackInput(); changed = true; }
+    }
+    if (typeof reading.dealer === "number" && state.dealer !== reading.dealer) {
+      state.dealer = reading.dealer; changed = true;
     }
     if (changed) { render(); scheduleCompute(); }
     return changed;

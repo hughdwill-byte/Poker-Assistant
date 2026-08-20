@@ -30,11 +30,15 @@
 
   var SUPPORTED = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
 
-  // Region keys we calibrate, in table order.
+  // Card regions we calibrate, in table order.
   var REGION_KEYS = ["hero0", "hero1", "b0", "b1", "b2", "b3", "b4"];
+  // Numeric regions read by digit OCR.
+  var NUM_KEYS = ["pot", "mystack"];
+  var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS);
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
+    pot: "Pot (number)", mystack: "My stack (number)",
   };
 
   // ---------- Persistence ----------
@@ -75,11 +79,14 @@
       }
     }
     // Colour / occupancy stats over the whole region.
-    var bright = 0, red = 0, green = 0, total = sw * sh;
+    var bright = 0, red = 0, green = 0, white = 0, total = sw * sh;
     for (var p = 0; p < data.length; p += 4) {
       var r = data[p], g = data[p + 1], b = data[p + 2];
       var lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
       if (lum > 175) bright++;
+      // Near-white card body (bright AND low saturation) - felt-colour agnostic.
+      if (lum > 200 && mx - mn < 44) white++;
       if (r > 90 && r - g > 38 && r - b > 38) red++;
       if (g > 70 && g - r > 20 && g - b > 15) green++;
     }
@@ -91,7 +98,7 @@
     for (k = 0; k < vec.length; k++) { var d2 = vec[k] - mean; sd += d2 * d2; }
     sd = Math.sqrt(sd / vec.length) || 1;
     for (k = 0; k < vec.length; k++) vec[k] = (vec[k] - mean) / sd;
-    return { vec: vec, bright: bright / total, red: red / total, green: green / total };
+    return { vec: vec, bright: bright / total, red: red / total, green: green / total, white: white / total };
   }
 
   function rms(a, b) {
@@ -103,11 +110,14 @@
   var threshold = 0.62; // match sensitivity (lower = stricter)
 
   function classify(sig) {
-    // Mostly felt / empty slot?
-    if (sig.green > 0.55 || (sig.bright < 0.05 && sig.red < 0.01)) return { status: "empty" };
+    // A face-up card is mostly a white body regardless of felt colour; if there
+    // is little white and little red pip, the slot is empty (undealt/felt).
+    var present = sig.white > 0.12 || sig.red > 0.05;
+    if (!present) return { status: "empty" };
     var best = null, bestScore = 1e9;
     for (var i = 0; i < templates.length; i++) {
       var t = templates[i];
+      if (t.kind === "digit") continue; // digits matched separately
       var score = rms(t.vec, sig.vec) + 1.4 * Math.abs((t.red || 0) - sig.red);
       if (score < bestScore) { bestScore = score; best = t; }
     }
@@ -117,6 +127,94 @@
       return { status: "card", id: labelToId(best.label), label: best.label };
     }
     return { status: "unknown" };
+  }
+
+  // ---------- Digit OCR (for pot / stack numbers) ----------
+  // Estimate the background luminance from the region's border pixels.
+  function estimateBg(img) {
+    var w = img.width, h = img.height, d = img.data, sum = 0, n = 0;
+    function add(x, y) { var i = (y * w + x) * 4; sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n++; }
+    for (var x = 0; x < w; x += 2) { add(x, 0); add(x, h - 1); }
+    for (var y = 0; y < h; y += 2) { add(0, y); add(w - 1, y); }
+    return sum / (n || 1);
+  }
+  // Binary ink mask (1 where a pixel is far from the background luminance).
+  function inkMask(img, bg) {
+    var w = img.width, h = img.height, d = img.data, m = new Uint8Array(w * h);
+    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
+      var i = (y * w + x) * 4;
+      var lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      if (Math.abs(lum - bg) > 60) m[y * w + x] = 1;
+    }
+    return m;
+  }
+  // Segment ink columns into glyph x-ranges.
+  function segmentGlyphs(mask, w, h) {
+    var onThr = Math.max(1, h * 0.06), glyphs = [], run = null;
+    for (var x = 0; x < w; x++) {
+      var c = 0; for (var y = 0; y < h; y++) c += mask[y * w + x];
+      var on = c >= onThr;
+      if (on) { if (!run) run = { x0: x, x1: x }; else run.x1 = x; }
+      else if (run) { glyphs.push(run); run = null; }
+    }
+    if (run) glyphs.push(run);
+    return glyphs;
+  }
+  // Crop an arbitrary rectangle to a fresh ImageData.
+  function cropRect(img, x0, y0, x1, y1) {
+    var w = img.width, nw = Math.max(1, x1 - x0 + 1), nh = Math.max(1, y1 - y0 + 1);
+    var out = new ImageData(nw, nh), s = img.data, o = out.data;
+    for (var y = 0; y < nh; y++) for (var x = 0; x < nw; x++) {
+      var si = ((y0 + y) * w + (x0 + x)) * 4, di = (y * nw + x) * 4;
+      o[di] = s[si]; o[di + 1] = s[si + 1]; o[di + 2] = s[si + 2]; o[di + 3] = 255;
+    }
+    return out;
+  }
+  // Vertical ink extent of a glyph across its columns.
+  function vBounds(mask, w, h, x0, x1) {
+    var y0 = h, y1 = -1;
+    for (var y = 0; y < h; y++) {
+      for (var x = x0; x <= x1; x++) if (mask[y * w + x]) { if (y < y0) y0 = y; if (y > y1) y1 = y; break; }
+    }
+    if (y1 < 0) { y0 = 0; y1 = h - 1; }
+    return { y0: y0, y1: y1 };
+  }
+  function classifyGlyph(sig) {
+    var best = null, bs = 1e9;
+    for (var i = 0; i < templates.length; i++) {
+      var t = templates[i];
+      if (t.kind !== "digit") continue;
+      var s = rms(t.vec, sig.vec);
+      if (s < bs) { bs = s; best = t; }
+    }
+    return (best && bs < threshold + 0.18) ? best.label : null; // digits slightly looser
+  }
+  function parseNumber(str) {
+    if (!str || str.indexOf("?") >= 0) return null;
+    var mult = 1, s = str.replace(/,/g, "").replace(/\s/g, "");
+    if (/k$/i.test(s)) { mult = 1e3; s = s.slice(0, -1); }
+    else if (/m$/i.test(s)) { mult = 1e6; s = s.slice(0, -1); }
+    var v = parseFloat(s);
+    return isFinite(v) ? Math.round(v * mult) : null;
+  }
+  // Read a numeric region -> { str, value, unknowns:[{img,sig}] }
+  function readNumber(img) {
+    var w = img.width, h = img.height;
+    var bg = estimateBg(img);
+    var mask = inkMask(img, bg);
+    var glyphs = segmentGlyphs(mask, w, h);
+    var str = "", unknowns = [];
+    for (var i = 0; i < glyphs.length; i++) {
+      var g = glyphs[i];
+      if (g.x1 - g.x0 < 1 && i > 0) continue;           // skip 1px specks
+      var vb = vBounds(mask, w, h, g.x0, g.x1);          // tight crop both axes
+      var sub = cropRect(img, g.x0, vb.y0, g.x1, vb.y1);
+      var sig = signature(sub);
+      var lab = classifyGlyph(sig);
+      if (lab == null) { str += "?"; unknowns.push({ img: sub, sig: sig }); }
+      else str += lab;
+    }
+    return { str: str, value: parseNumber(str), unknowns: unknowns };
   }
 
   // ---------- Capture plumbing ----------
@@ -183,7 +281,24 @@
         if (res.status === "card") setSlot(reading, key, res.id);
         else if (res.status === "empty") setSlot(reading, key, null);
         // 'back'/'unknown' -> leave the manual value alone
-        if (res.status === "unknown") unknowns.push({ key: key, img: img, sig: sig });
+        if (res.status === "unknown") unknowns.push({ key: key, kind: "card", img: img, sig: sig });
+      }
+    });
+    // Numeric regions (pot / my stack) via digit OCR.
+    NUM_KEYS.forEach(function (key) {
+      var rect = regions[key];
+      if (!rect) return;
+      var num = readNumber(regionImageData(rect));
+      var val = "num:" + num.str;
+      var st = stab[key];
+      if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
+      st.num = num;
+      if (st.count >= 2 && num.value != null) {
+        if (key === "pot") reading.pot = num.value;
+        else if (key === "mystack") reading.stack = num.value;
+      }
+      if (st.count >= 2 && num.unknowns.length) {
+        unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
     });
     API.applyReading(reading);
@@ -257,8 +372,8 @@
 
     // Region chips
     el.chips = h("div", "watch-chips");
-    REGION_KEYS.forEach(function (key) {
-      var c = h("button", "watch-chip", REGION_LABELS[key]);
+    ALL_KEYS.forEach(function (key) {
+      var c = h("button", "watch-chip" + (NUM_KEYS.indexOf(key) >= 0 ? " num" : ""), REGION_LABELS[key]);
       c.dataset.key = key;
       c.addEventListener("click", function () { selectedKey = key; calibrating = true; refreshChips(); setStatus("Drag a box over " + REGION_LABELS[key] + "."); drawOverlay(); });
       el.chips.appendChild(c);
@@ -284,9 +399,10 @@
     modal.appendChild(settings);
 
     modal.appendChild(h("p", "watch-note",
-      "One-time setup per site: drag a box over each of your two cards and the five board spots. " +
-      "Start watching; when it sees a card it doesn't know it'll ask you to label it once. " +
-      "Your cards and the board then update automatically. Enter chips/bets in the main panel."));
+      "One-time setup per site: drag a box over each of your two cards, the five board spots, " +
+      "and (optional) the Pot and My-stack numbers. Start watching; when it meets a card or digit " +
+      "it doesn't know it asks you to label it once. Then close this panel with ✕ - it keeps " +
+      "watching in the background (a ● Watching pill reopens it) and your table updates live."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
@@ -341,9 +457,11 @@
     el.canvas.width = r.width; el.canvas.height = r.height;
     var ctx = el.canvas.getContext("2d");
     ctx.clearRect(0, 0, r.width, r.height);
-    REGION_KEYS.forEach(function (key) {
+    ALL_KEYS.forEach(function (key) {
       var rect = regions[key]; if (!rect) return;
-      ctx.strokeStyle = key === selectedKey ? "#f5b93b" : (key.indexOf("hero") === 0 ? "#4ade80" : "#60a5fa");
+      ctx.strokeStyle = key === selectedKey ? "#f5b93b"
+        : NUM_KEYS.indexOf(key) >= 0 ? "#f5b93b"
+        : key.indexOf("hero") === 0 ? "#4ade80" : "#60a5fa";
       ctx.lineWidth = 2;
       ctx.strokeRect(rect.x * r.width, rect.y * r.height, rect.w * r.width, rect.h * r.height);
       ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.font = "11px system-ui";
@@ -379,7 +497,7 @@
         saveJSON(LS_REGIONS, regions);
         setStatus(REGION_LABELS[selectedKey] + " box set.");
         // advance to next unset region for convenience
-        var next = REGION_KEYS.filter(function (k) { return !regions[k]; })[0];
+        var next = ALL_KEYS.filter(function (k) { return !regions[k]; })[0];
         selectedKey = next || null;
         if (next) setStatus("Now drag over " + REGION_LABELS[next] + ".");
       }
@@ -403,6 +521,15 @@
       el.strip.appendChild(chip);
       if (key === "hero1") el.strip.appendChild(h("span", "strip-sep", "|"));
     });
+    // Numeric readouts.
+    NUM_KEYS.forEach(function (key) {
+      if (!regions[key]) return;
+      var st = stab[key];
+      var txt = (st && st.num) ? (st.num.value != null ? st.num.value.toLocaleString() : st.num.str || "?") : "…";
+      var chip = h("span", "strip-num" + (st && st.num && st.num.value == null ? " q" : ""),
+        (key === "pot" ? "Pot " : "Stack ") + txt);
+      el.strip.appendChild(chip);
+    });
   }
   function cardColor(id) { return Poker.SUIT_COLOR[Poker.suitOf(id)]; }
 
@@ -415,36 +542,49 @@
     if (!teaching) { el.teach.hidden = true; return; }
     el.teach.hidden = false;
     el.teach.innerHTML = "";
-    el.teach.appendChild(h("div", "teach-title", "Unrecognised " + REGION_LABELS[teaching.key] + " — tell me what it is (once):"));
+    var isDigit = teaching.kind === "digit";
+    el.teach.appendChild(h("div", "teach-title",
+      (isDigit ? "Unrecognised digit in " : "Unrecognised ") + REGION_LABELS[teaching.key] +
+      " — tell me what it is (once):"));
     var body = h("div", "teach-body");
     var thumb = h("canvas", "teach-thumb");
     thumb.width = teaching.img.width; thumb.height = teaching.img.height;
     thumb.getContext("2d").putImageData(teaching.img, 0, 0);
     body.appendChild(thumb);
 
-    var grid = h("div", "teach-grid");
-    var RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
-    var SUITS = [["s", "♠", "black"], ["h", "♥", "red"], ["d", "♦", "red"], ["c", "♣", "black"]];
-    SUITS.forEach(function (s) {
-      RANKS.forEach(function (rk) {
-        var lbl = (rk === "10" ? "10" : rk) + s[0];
-        var btn = h("button", "teach-pick " + s[2], rk + s[1]);
-        btn.addEventListener("click", function () { teachAs(lbl); });
+    var grid = h("div", "teach-grid" + (isDigit ? " digit" : ""));
+    if (isDigit) {
+      ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", ".", "K", "M"].forEach(function (g) {
+        var btn = h("button", "teach-pick", g === "," ? "," : g === "." ? "." : g);
+        btn.addEventListener("click", function () { teachAs(g, "digit"); });
         grid.appendChild(btn);
       });
-    });
+    } else {
+      var RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
+      var SUITS = [["s", "♠", "black"], ["h", "♥", "red"], ["d", "♦", "red"], ["c", "♣", "black"]];
+      SUITS.forEach(function (s) {
+        RANKS.forEach(function (rk) {
+          var lbl = (rk === "10" ? "10" : rk) + s[0];
+          var btn = h("button", "teach-pick " + s[2], rk + s[1]);
+          btn.addEventListener("click", function () { teachAs(lbl, "card"); });
+          grid.appendChild(btn);
+        });
+      });
+    }
     body.appendChild(grid);
     el.teach.appendChild(body);
 
     var extra = h("div", "teach-extra");
-    extra.appendChild(mkbtn("It's a face-down card", function () { teachAs("back"); }));
-    extra.appendChild(mkbtn("It's empty", function () { teachAs("empty"); }));
+    if (!isDigit) {
+      extra.appendChild(mkbtn("It's a face-down card", function () { teachAs("back", "card"); }));
+      extra.appendChild(mkbtn("It's empty", function () { teachAs("empty", "card"); }));
+    }
     extra.appendChild(mkbtn("Skip", function () { teaching = null; renderTeach([]); }));
     el.teach.appendChild(extra);
   }
-  function teachAs(label) {
+  function teachAs(label, kind) {
     if (!teaching) return;
-    templates.push({ label: label, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
+    templates.push({ label: label, kind: kind || "card", red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
     saveJSON(LS_TEMPLATES, templates);
     stab[teaching.key] = null; // force re-evaluate
     teaching = null;
@@ -452,12 +592,39 @@
   }
 
   // ---------- open / close ----------
+  // While watching we must keep the <video> in the render tree or the browser
+  // stops decoding frames. So closing the panel mid-watch only MINIMISES it
+  // (moved off-screen but still live); a floating pill reopens it.
+  var pill = null;
+  function ensurePill() {
+    if (pill) return;
+    pill = h("button", "watch-pill", "<span class='dot'></span> Watching — tap to open");
+    pill.hidden = true;
+    pill.addEventListener("click", openModal);
+    document.body.appendChild(pill);
+  }
   function openModal() {
     if (!el.overlay) buildModal();
+    ensurePill();
+    el.overlay.classList.remove("min");
     el.overlay.hidden = false;
+    pill.hidden = true;
     if (SUPPORTED) { requestAnimationFrame(drawOverlay); }
   }
-  function closeModal() { if (el.overlay) el.overlay.hidden = true; }
+  function closeModal() {
+    if (!el.overlay) return;
+    ensurePill();
+    if (watching) {
+      // keep capturing in the background
+      el.overlay.classList.add("min");
+      el.overlay.hidden = false;
+      pill.hidden = false;
+    } else {
+      el.overlay.classList.remove("min");
+      el.overlay.hidden = true;
+      pill.hidden = true;
+    }
+  }
 
   // Wire the trigger buttons (added in index.html).
   function bind(id) { var b = document.getElementById(id); if (b) b.addEventListener("click", openModal); }
@@ -468,8 +635,9 @@
 
   // Expose a tiny hook for automated testing (no effect in normal use).
   window.PokerWatch = {
-    _signature: signature, _classify: classify, _labelToId: labelToId,
-    _teach: function (label, sig) { templates.push({ label: label, red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
+    _signature: signature, _classify: classify, _labelToId: labelToId, _readNumber: readNumber,
+    _teach: function (label, sig, kind) { templates.push({ label: label, kind: kind || "card", red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
     _regions: function () { return regions; }, _templates: function () { return templates; },
+    _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
   };
 })();
