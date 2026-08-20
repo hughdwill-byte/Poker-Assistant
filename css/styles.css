@@ -587,3 +587,20 @@ body {
 .strip-num.q { color: var(--accent); border-color: var(--accent); }
 .teach-grid.digit { grid-template-columns: repeat(7, 1fr); }
 .teach-grid.digit .teach-pick { font-size: 15px; padding: 8px 0; }
+
+/* Watch mode live dock (shown when the panel is closed but still capturing) */
+.watch-dock {
+  position: fixed; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 84; width: 240px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: var(--shadow); overflow: hidden;
+}
+.watch-dock[hidden] { display: none; }
+.watch-dock-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; font-size: 12px; font-weight: 700; }
+.watch-dock-head .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 5px; animation: watchpulse 1.1s infinite; }
+.watch-dock-btns { display: flex; gap: 6px; }
+.watch-dock-btns .btn { padding: 4px 9px; font-size: 11.5px; }
+.watch-dock-video { width: 100%; background: #05070b; line-height: 0; }
+.watch-dock-video video { width: 100%; height: auto; display: block; }
+.watch-dock-strip { padding: 7px 9px; gap: 4px; }
+.watch-dock-strip .strip-card { min-width: 22px; padding: 3px 4px; font-size: 11px; }
+.watch-dock-strip .strip-num { padding: 3px 6px; font-size: 10.5px; }

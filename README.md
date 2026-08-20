@@ -126,8 +126,8 @@ different site/tab than the app itself and update the odds live.
    and optionally the **Pot** and **My-stack** numbers. Boxes are saved.
 3. Click **Start watching.** When it meets a card *or digit* it doesn't know it
    shows the crop and asks you to label it **once**; after that it's automatic.
-4. **Close the panel with ✕** — it keeps watching in the background (a
-   **● Watching** pill reopens it) so you can see the main table update live:
+4. **Close the panel with ✕** — it shrinks to a small **live dock** (bottom-left) and keeps watching, so you can
+   see the main table update live:
    your cards, the board, the pot, and your stack all fill in, and a big
    **action banner** under your cards shows FOLD / CHECK / CALL / BET.
 5. Mark the **dealer** with the **D** button on a seat and the advice shows your

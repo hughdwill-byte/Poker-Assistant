@@ -225,6 +225,7 @@
     watching = false;
     if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    if (el.dock) el.dock.hidden = true;
     setStatus("Not sharing.");
     updateButtons();
   }
@@ -363,9 +364,12 @@
     modal.appendChild(el.status);
 
     // Video + overlay canvas
-    var stage = h("div", "watch-stage");
-    video = document.createElement("video"); video.muted = true; video.playsInline = true; video.className = "watch-video";
+    var stage = h("div", "watch-stage"); el.stage = stage;
+    video = document.createElement("video"); video.muted = true; video.playsInline = true; video.autoplay = true; video.className = "watch-video";
     el.canvas = document.createElement("canvas"); el.canvas.className = "watch-canvas";
+    // Offscreen canvas used to pull pixels from the current video frame.
+    work = document.createElement("canvas");
+    wctx = work.getContext("2d", { willReadFrequently: true });
     stage.appendChild(video); stage.appendChild(el.canvas);
     modal.appendChild(stage);
     bindCalibrationMouse();
@@ -401,11 +405,28 @@
     modal.appendChild(h("p", "watch-note",
       "One-time setup per site: drag a box over each of your two cards, the five board spots, " +
       "and (optional) the Pot and My-stack numbers. Start watching; when it meets a card or digit " +
-      "it doesn't know it asks you to label it once. Then close this panel with ✕ - it keeps " +
-      "watching in the background (a ● Watching pill reopens it) and your table updates live."));
+      "it doesn't know it asks you to label it once. Then close this panel with ✕ - it shrinks to a " +
+      "small live dock (bottom-left) and keeps watching, so your main table updates live."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
+
+    // Persistent live dock: when the panel is closed mid-watch the <video> is
+    // moved here so it stays visibly rendered (a hidden video stops decoding).
+    var dock = h("div", "watch-dock"); dock.hidden = true; el.dock = dock;
+    var dockHead = h("div", "watch-dock-head");
+    dockHead.appendChild(h("span", null, "<span class='dot'></span> Watching"));
+    var dockBtns = h("div", "watch-dock-btns");
+    dockBtns.appendChild(mkbtn("Expand", openModal));
+    dockBtns.appendChild(mkbtn("Stop", stopStream));
+    dockHead.appendChild(dockBtns);
+    dock.appendChild(dockHead);
+    el.dockVideo = h("div", "watch-dock-video");
+    dock.appendChild(el.dockVideo);
+    el.dockStrip = h("div", "watch-strip watch-dock-strip");
+    dock.appendChild(el.dockStrip);
+    document.body.appendChild(dock);
+
     refreshChips();
     updateButtons();
   }
@@ -530,6 +551,7 @@
         (key === "pot" ? "Pot " : "Stack ") + txt);
       el.strip.appendChild(chip);
     });
+    if (el.dockStrip) el.dockStrip.innerHTML = el.strip.innerHTML; // mirror into the dock
   }
   function cardColor(id) { return Poker.SUIT_COLOR[Poker.suitOf(id)]; }
 
@@ -592,37 +614,28 @@
   }
 
   // ---------- open / close ----------
-  // While watching we must keep the <video> in the render tree or the browser
-  // stops decoding frames. So closing the panel mid-watch only MINIMISES it
-  // (moved off-screen but still live); a floating pill reopens it.
-  var pill = null;
-  function ensurePill() {
-    if (pill) return;
-    pill = h("button", "watch-pill", "<span class='dot'></span> Watching — tap to open");
-    pill.hidden = true;
-    pill.addEventListener("click", openModal);
-    document.body.appendChild(pill);
-  }
+  // A hidden <video> stops decoding, so when the panel is closed mid-watch we
+  // move the live <video> into a small always-visible dock; the single stream
+  // keeps playing across the DOM move so the recogniser keeps getting frames.
   function openModal() {
     if (!el.overlay) buildModal();
-    ensurePill();
-    el.overlay.classList.remove("min");
+    if (video && el.stage && video.parentNode !== el.stage) {
+      el.stage.insertBefore(video, el.canvas); // put the live video back in the panel
+    }
+    if (el.dock) el.dock.hidden = true;
     el.overlay.hidden = false;
-    pill.hidden = true;
     if (SUPPORTED) { requestAnimationFrame(drawOverlay); }
   }
   function closeModal() {
     if (!el.overlay) return;
-    ensurePill();
-    if (watching) {
-      // keep capturing in the background
-      el.overlay.classList.add("min");
-      el.overlay.hidden = false;
-      pill.hidden = false;
-    } else {
-      el.overlay.classList.remove("min");
+    if (SUPPORTED && watching && stream) {
+      // Keep capturing: dock the live video (still visibly rendered).
+      if (video && el.dockVideo && video.parentNode !== el.dockVideo) el.dockVideo.appendChild(video);
+      el.dock.hidden = false;
       el.overlay.hidden = true;
-      pill.hidden = true;
+    } else {
+      if (el.dock) el.dock.hidden = true;
+      el.overlay.hidden = true;
     }
   }
 
@@ -639,5 +652,7 @@
     _teach: function (label, sig, kind) { templates.push({ label: label, kind: kind || "card", red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
+    _useStream: function (s) { if (!el.overlay) buildModal(); stream = s; video.srcObject = s; video.play(); },
+    _start: startWatching, _videoParent: function () { return video && video.parentNode ? video.parentNode.className : null; },
   };
 })();
