@@ -43,12 +43,14 @@
 
   // ---------- Persistence ----------
   var LS_REGIONS = "pokerwatch.regions.v1";
-  var LS_TEMPLATES = "pokerwatch.templates.v1";
+  var LS_TEMPLATES = "pokerwatch.templates.v2"; // v2: rank/suit/digit glyphs
+  var LS_IGNORE = "pokerwatch.ignore.v1";
   function loadJSON(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
-  var regions = loadJSON(LS_REGIONS, {}); // key -> {x,y,w,h} normalised
-  var templates = loadJSON(LS_TEMPLATES, []); // [{label, red, vec:[...]}]
+  var regions = loadJSON(LS_REGIONS, {});     // key -> {x,y,w,h} normalised
+  var templates = loadJSON(LS_TEMPLATES, []); // [{kind, label, red, vec:[...]}]
+  var ignored = loadJSON(LS_IGNORE, []);      // skipped glyph signatures (won't re-prompt)
 
   // ---------- Card label <-> id ----------
   var RANK_FROM = { A: 14, K: 13, Q: 12, J: 11, T: 10, "10": 10, "9": 9, "8": 8, "7": 7, "6": 6, "5": 5, "4": 4, "3": 3, "2": 2 };
@@ -107,7 +109,39 @@
     return Math.sqrt(s / n);
   }
 
-  var threshold = 0.62; // match sensitivity (lower = stricter)
+  // A higher-resolution binary "ink-shape" descriptor for matching individual
+  // glyphs (ranks / suits / digits). Built from a mask that was computed on an
+  // image WITH background (the whole region), sampled over the glyph's bounding
+  // box - crucial, because a tight glyph crop has no background to threshold.
+  var GW = 24, GH = 36;
+  function glyphVec(mask, w, x0, y0, x1, y1) {
+    var bw = x1 - x0 + 1, bh = y1 - y0 + 1, vec = new Float32Array(GW * GH);
+    for (var ty = 0; ty < GH; ty++) for (var tx = 0; tx < GW; tx++) {
+      var cx0 = x0 + ((tx * bw / GW) | 0), cx1 = Math.max(cx0 + 1, x0 + (((tx + 1) * bw / GW) | 0));
+      var cy0 = y0 + ((ty * bh / GH) | 0), cy1 = Math.max(cy0 + 1, y0 + (((ty + 1) * bh / GH) | 0));
+      var c = 0, n = 0;
+      for (var y = cy0; y < cy1; y++) for (var x = cx0; x < cx1; x++) { c += mask[y * w + x]; n++; }
+      vec[ty * GW + tx] = (c / (n || 1)) > 0.28 ? 1 : 0;
+    }
+    return vec;
+  }
+  // Colour fractions of an image region's bounding box (for suit red/black and
+  // for rejecting colourful chip icons that aren't glyphs).
+  function boxColor(img, x0, y0, x1, y1) {
+    var w = img.width, d = img.data, red = 0, colorful = 0, tot = 0;
+    for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++) {
+      var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      if (r > 90 && r - g > 38 && r - b > 38) red++;
+      if (mx - mn > 55 && mx > 70) colorful++; // saturated (not white/grey/black)
+      tot++;
+    }
+    return { red: red / (tot || 1), colorful: colorful / (tot || 1) };
+  }
+
+  var threshold = 0.62;  // whole-region present match (legacy)
+  var gthr = 0.42;       // rank/digit match distance (must absorb red-vs-black edge noise)
+  var sthr = 0.30;       // suit match distance (suits are single-colour, so tighter)
 
   function classify(sig) {
     // A face-up card is mostly a white body regardless of felt colour; if there
@@ -130,21 +164,30 @@
   }
 
   // ---------- Digit OCR (for pot / stack numbers) ----------
-  // Estimate the background luminance from the region's border pixels.
+  // Estimate the background luminance as the MEDIAN over the region. The
+  // dominant surface (white card body, or the dark panel behind a number) sets
+  // the background, so text/pips stand out as the minority "ink" - robust even
+  // when a bit of felt or border is included in the crop.
   function estimateBg(img) {
-    var w = img.width, h = img.height, d = img.data, sum = 0, n = 0;
-    function add(x, y) { var i = (y * w + x) * 4; sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n++; }
-    for (var x = 0; x < w; x += 2) { add(x, 0); add(x, h - 1); }
-    for (var y = 0; y < h; y += 2) { add(0, y); add(w - 1, y); }
-    return sum / (n || 1);
+    var w = img.width, h = img.height, d = img.data, vals = [];
+    var step = Math.max(1, Math.floor(Math.sqrt(w * h / 500)));
+    for (var y = 0; y < h; y += step) for (var x = 0; x < w; x += step) {
+      var i = (y * w + x) * 4;
+      vals.push(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    }
+    vals.sort(function (a, b) { return a - b; });
+    return vals[vals.length >> 1];
   }
-  // Binary ink mask (1 where a pixel is far from the background luminance).
+  // Binary ink mask. A pixel is "ink" if it differs from the background in
+  // luminance OR is strongly coloured (saturated). The saturation test makes a
+  // RED glyph produce the same shape as a BLACK one, so ranks match across
+  // suit colours (a red A and a black A give identical masks).
   function inkMask(img, bg) {
     var w = img.width, h = img.height, d = img.data, m = new Uint8Array(w * h);
     for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
-      var i = (y * w + x) * 4;
-      var lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      if (Math.abs(lum - bg) > 60) m[y * w + x] = 1;
+      var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
+      var lum = 0.299 * r + 0.587 * g + 0.114 * b, sat = Math.max(r, g, b) - Math.min(r, g, b);
+      if (Math.abs(lum - bg) > 55 || sat > 60) m[y * w + x] = 1;
     }
     return m;
   }
@@ -187,34 +230,140 @@
       var s = rms(t.vec, sig.vec);
       if (s < bs) { bs = s; best = t; }
     }
-    return (best && bs < threshold + 0.18) ? best.label : null; // digits slightly looser
+    return (best && bs < gthr) ? best.label : null;
   }
+  // Parse a token string of digits, '.' separators and an optional K/M suffix.
+  // Rule: a single separator before a K/M suffix is a decimal point (1.4M);
+  // all other separators are thousands groupers (990,000 / 1.234.567).
   function parseNumber(str) {
     if (!str || str.indexOf("?") >= 0) return null;
-    var mult = 1, s = str.replace(/,/g, "").replace(/\s/g, "");
-    if (/k$/i.test(s)) { mult = 1e3; s = s.slice(0, -1); }
-    else if (/m$/i.test(s)) { mult = 1e6; s = s.slice(0, -1); }
-    var v = parseFloat(s);
-    return isFinite(v) ? Math.round(v * mult) : null;
+    var mult = 1, s = str;
+    var suf = s.match(/[KM]$/i);
+    if (suf) { mult = suf[0].toUpperCase() === "M" ? 1e6 : 1e3; s = s.slice(0, -1); }
+    var seps = (s.match(/\./g) || []).length;
+    var digits = s.replace(/\./g, "");
+    if (digits === "" || !/^[0-9]+$/.test(digits)) return null;
+    var val = (mult > 1 && seps === 1) ? parseFloat(s) : parseInt(digits, 10);
+    return isFinite(val) ? Math.round(val * mult) : null;
   }
-  // Read a numeric region -> { str, value, unknowns:[{img,sig}] }
+  // Read a numeric region -> { str, value, unknowns:[{img,sig,kind}] }
+  // Robust to chip icons / commas / noise: we keep only digit-shaped glyphs
+  // (tall enough, not too wide, not colourful) and drop the rest, so commas and
+  // icons never trigger a "verify this" prompt.
   function readNumber(img) {
     var w = img.width, h = img.height;
     var bg = estimateBg(img);
     var mask = inkMask(img, bg);
     var glyphs = segmentGlyphs(mask, w, h);
+    // Measure glyph heights to find the digit height (commas/dots are shorter).
+    var metrics = glyphs.map(function (g) {
+      var vb = vBounds(mask, w, h, g.x0, g.x1);
+      return { g: g, vb: vb, hgt: vb.y1 - vb.y0 + 1, wid: g.x1 - g.x0 + 1 };
+    });
+    var maxH = 1; metrics.forEach(function (m) { if (m.hgt > maxH) maxH = m.hgt; });
+    var tallW = metrics.filter(function (m) { return m.hgt >= 0.55 * maxH; }).map(function (m) { return m.wid; }).sort(function (a, b) { return a - b; });
+    var medW = tallW.length ? tallW[tallW.length >> 1] : 1;
     var str = "", unknowns = [];
-    for (var i = 0; i < glyphs.length; i++) {
-      var g = glyphs[i];
-      if (g.x1 - g.x0 < 1 && i > 0) continue;           // skip 1px specks
-      var vb = vBounds(mask, w, h, g.x0, g.x1);          // tight crop both axes
-      var sub = cropRect(img, g.x0, vb.y0, g.x1, vb.y1);
-      var sig = signature(sub);
+    for (var i = 0; i < metrics.length; i++) {
+      var m = metrics[i];
+      var col = boxColor(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1);
+      if (col.colorful > 0.28) continue;                 // colourful chip icon -> ignore
+      if (m.hgt < 0.55 * maxH) { str += "."; continue; } // short = comma/decimal separator
+      if (m.wid > 2.6 * medW) continue;                  // wide blob (icon) -> ignore
+      var sig = { vec: glyphVec(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), red: col.red };
       var lab = classifyGlyph(sig);
-      if (lab == null) { str += "?"; unknowns.push({ img: sub, sig: sig }); }
-      else str += lab;
+      if (lab == null) {
+        if (isIgnored(sig, "digit")) continue;           // user skipped this shape
+        str += "?"; unknowns.push({ img: cropRect(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), sig: sig, kind: "digit" });
+      } else str += lab;
     }
     return { str: str, value: parseNumber(str), unknowns: unknowns };
+  }
+
+  // ---------- Corner-based card recognition (rank + suit separately) ----------
+  // Standard cards show the rank then a small suit under it in the corner. We
+  // read those two glyphs, so teaching a rank once covers all four suits and a
+  // suit once covers all thirteen ranks (~17 teaches for the whole deck).
+  var CORNER = { x0: 0.06, y0: 0.04, x1: 0.5, y1: 0.64 };
+  var RANK_VAL = { A: 14, K: 13, Q: 12, J: 11, "10": 10, "9": 9, "8": 8, "7": 7, "6": 6, "5": 5, "4": 4, "3": 3, "2": 2 };
+  var SUIT_CODE = { c: 0, d: 1, h: 2, s: 3 };
+
+  function subImage(img, fx0, fy0, fx1, fy1) {
+    var w = img.width, h = img.height;
+    return cropRect(img,
+      Math.max(0, Math.floor(fx0 * w)), Math.max(0, Math.floor(fy0 * h)),
+      Math.min(w - 1, Math.ceil(fx1 * w)), Math.min(h - 1, Math.ceil(fy1 * h)));
+  }
+  function rowBands(mask, w, h) {
+    var rows = new Array(h), maxRow = 0, y, x;
+    for (y = 0; y < h; y++) { var c = 0; for (x = 0; x < w; x++) c += mask[y * w + x]; rows[y] = c; if (c > maxRow) maxRow = c; }
+    // Adaptive: a row is "on" only if its ink is a real fraction of the busiest
+    // row, so a couple of edge/felt pixels don't fill the gap between rank & suit.
+    var onThr = Math.max(2, maxRow * 0.3), bands = [], run = null;
+    for (y = 0; y < h; y++) {
+      var on = rows[y] >= onThr;
+      if (on) { if (!run) run = { y0: y, y1: y }; else run.y1 = y; }
+      else if (run) { bands.push(run); run = null; }
+    }
+    if (run) bands.push(run);
+    return bands;
+  }
+  function colBounds(mask, w, y0, y1) {
+    var x0 = w, x1 = -1;
+    for (var x = 0; x < w; x++) for (var y = y0; y <= y1; y++) if (mask[y * w + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; break; }
+    if (x1 < 0) { x0 = 0; x1 = w - 1; }
+    return { x0: x0, x1: x1 };
+  }
+  function matchKind(sig, kind, useColor) {
+    var best = null, bs = 1e9;
+    for (var i = 0; i < templates.length; i++) {
+      var t = templates[i];
+      if (t.kind !== kind) continue;
+      var s = rms(t.vec, sig.vec) + (useColor ? 1.0 * Math.abs((t.red || 0) - sig.red) : 0);
+      if (s < bs) { bs = s; best = t; }
+    }
+    return (best && bs < (kind === "suit" ? sthr : gthr)) ? best.label : null;
+  }
+  // Returns {status:'empty'|'card'|'unknown', id?, label?, teach?, img?, sig?}
+  function recognizeCard(regionImg) {
+    var whole = signature(regionImg);
+    if (!(whole.white > 0.1 || whole.red > 0.05)) return { status: "empty" };
+
+    var corner = subImage(regionImg, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1);
+    var cw = corner.width, ch = corner.height;
+    var mask = inkMask(corner, estimateBg(corner));
+    var bands = rowBands(mask, cw, ch);
+    if (!bands.length) return { status: "unknown" };
+
+    var rankBand = bands[0];
+    var suitBand = bands.length >= 2 ? bands[bands.length - 1] : null;
+
+    var rcb = colBounds(mask, cw, rankBand.y0, rankBand.y1);
+    var rankImg = cropRect(corner, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1);
+    var rankSig = { vec: glyphVec(mask, cw, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1), red: 0 };
+    var rank = matchKind(rankSig, "rank", false);
+    if (!rank) {
+      if (isIgnored(rankSig, "rank")) return { status: "unknown" };
+      return { status: "unknown", teach: "rank", img: rankImg, sig: rankSig };
+    }
+
+    if (!suitBand) return { status: "unknown", teach: "suit", img: rankImg, sig: rankSig };
+    var scb = colBounds(mask, cw, suitBand.y0, suitBand.y1);
+    var suitImg = cropRect(corner, scb.x0, suitBand.y0, scb.x1, suitBand.y1);
+    var suitSig = { vec: glyphVec(mask, cw, scb.x0, suitBand.y0, scb.x1, suitBand.y1), red: boxColor(corner, scb.x0, suitBand.y0, scb.x1, suitBand.y1).red };
+    var suit = matchKind(suitSig, "suit", true);
+    if (!suit) {
+      if (isIgnored(suitSig, "suit")) return { status: "unknown" };
+      return { status: "unknown", teach: "suit", img: suitImg, sig: suitSig };
+    }
+    return { status: "card", id: Poker.makeId(RANK_VAL[rank], SUIT_CODE[suit]), label: rank + suit };
+  }
+
+  function isIgnored(sig, kind) {
+    for (var i = 0; i < ignored.length; i++) {
+      if (ignored[i].kind === kind && rms(ignored[i].vec, sig.vec) < gthr) return true;
+    }
+    return false;
   }
 
   // ---------- Capture plumbing ----------
@@ -271,18 +420,17 @@
       var rect = regions[key];
       if (!rect) return;
       var img = regionImageData(rect);
-      var sig = signature(img);
-      var res = classify(sig);
-      var val = res.status === "card" ? "card:" + res.label : res.status;
+      var res = recognizeCard(img);
+      var val = res.status === "card" ? "card:" + res.label : res.status + (res.teach ? ":" + res.teach : "");
       var st = stab[key];
       if (st && st.val === val) st.count++;
       else stab[key] = st = { val: val, count: 1 };
-      st.sig = sig; st.res = res; st.img = img;
+      st.res = res;
       if (st.count >= 2) {
         if (res.status === "card") setSlot(reading, key, res.id);
         else if (res.status === "empty") setSlot(reading, key, null);
-        // 'back'/'unknown' -> leave the manual value alone
-        if (res.status === "unknown") unknowns.push({ key: key, kind: "card", img: img, sig: sig });
+        // 'unknown' -> leave the manual value alone; queue a glyph to teach
+        if (res.status === "unknown" && res.teach) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig });
       }
     });
     // Numeric regions (pot / my stack) via digit OCR.
@@ -398,15 +546,19 @@
     settings.appendChild(labelWrap("Match sensitivity", sensSlider()));
     var clear = h("div", "watch-clearbtns");
     clear.appendChild(mkbtn("Clear boxes", function () { regions = {}; saveJSON(LS_REGIONS, regions); refreshChips(); drawOverlay(); setStatus("Calibration cleared."); }));
-    clear.appendChild(mkbtn("Forget taught cards", function () { templates = []; saveJSON(LS_TEMPLATES, templates); setStatus("Taught-card library cleared."); }));
+    clear.appendChild(mkbtn("Forget taught cards", function () {
+      templates = []; ignored = []; saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
+      setStatus("Taught glyphs + skips cleared.");
+    }));
     settings.appendChild(clear);
     modal.appendChild(settings);
 
     modal.appendChild(h("p", "watch-note",
       "One-time setup per site: drag a box over each of your two cards, the five board spots, " +
-      "and (optional) the Pot and My-stack numbers. Start watching; when it meets a card or digit " +
-      "it doesn't know it asks you to label it once. Then close this panel with ✕ - it shrinks to a " +
-      "small live dock (bottom-left) and keeps watching, so your main table updates live."));
+      "and (optional) the Pot and My-stack numbers. It reads the corner rank + suit, so you only " +
+      "teach ~17 glyphs once (13 ranks + 4 suits), not every card. Tip: zoom the poker window " +
+      "(Ctrl/Cmd +) so the cards are bigger - accuracy improves a lot. Close with ✕ and it keeps " +
+      "watching from a small dock. Any misread card can be fixed with one tap on the table."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
@@ -442,8 +594,10 @@
     return s;
   }
   function sensSlider() {
-    var s = document.createElement("input"); s.type = "range"; s.min = 30; s.max = 110; s.value = Math.round(threshold * 100);
-    s.addEventListener("input", function () { threshold = +s.value / 100; });
+    // Controls the glyph match distance (gthr). Lower = stricter (fewer wrong
+    // reads, more "teach" prompts); higher = looser.
+    var s = document.createElement("input"); s.type = "range"; s.min = 8; s.max = 30; s.value = Math.round(gthr * 100);
+    s.addEventListener("input", function () { gthr = +s.value / 100; });
     return s;
   }
 
@@ -564,53 +718,57 @@
     if (!teaching) { el.teach.hidden = true; return; }
     el.teach.hidden = false;
     el.teach.innerHTML = "";
-    var isDigit = teaching.kind === "digit";
+    var kind = teaching.kind; // 'rank' | 'suit' | 'digit'
+    var titles = { rank: "the rank (corner number/letter)", suit: "the suit shape", digit: "a digit" };
     el.teach.appendChild(h("div", "teach-title",
-      (isDigit ? "Unrecognised digit in " : "Unrecognised ") + REGION_LABELS[teaching.key] +
-      " — tell me what it is (once):"));
+      "Unrecognised " + (titles[kind] || "glyph") + " in " + REGION_LABELS[teaching.key] +
+      " — tap what it is (just once each):"));
     var body = h("div", "teach-body");
     var thumb = h("canvas", "teach-thumb");
     thumb.width = teaching.img.width; thumb.height = teaching.img.height;
     thumb.getContext("2d").putImageData(teaching.img, 0, 0);
     body.appendChild(thumb);
 
-    var grid = h("div", "teach-grid" + (isDigit ? " digit" : ""));
-    if (isDigit) {
-      ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", ".", "K", "M"].forEach(function (g) {
-        var btn = h("button", "teach-pick", g === "," ? "," : g === "." ? "." : g);
+    var grid = h("div", "teach-grid " + kind);
+    if (kind === "digit") {
+      ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "K", "M"].forEach(function (g) {
+        var btn = h("button", "teach-pick", g);
+        btn.title = (g === "K" ? "thousands (K)" : g === "M" ? "millions (M)" : "");
         btn.addEventListener("click", function () { teachAs(g, "digit"); });
         grid.appendChild(btn);
       });
-    } else {
-      var RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
-      var SUITS = [["s", "♠", "black"], ["h", "♥", "red"], ["d", "♦", "red"], ["c", "♣", "black"]];
-      SUITS.forEach(function (s) {
-        RANKS.forEach(function (rk) {
-          var lbl = (rk === "10" ? "10" : rk) + s[0];
-          var btn = h("button", "teach-pick " + s[2], rk + s[1]);
-          btn.addEventListener("click", function () { teachAs(lbl, "card"); });
-          grid.appendChild(btn);
-        });
+    } else if (kind === "suit") {
+      [["s", "♠", "black"], ["h", "♥", "red"], ["d", "♦", "red"], ["c", "♣", "black"]].forEach(function (s) {
+        var btn = h("button", "teach-pick " + s[2], s[1]);
+        btn.addEventListener("click", function () { teachAs(s[0], "suit"); });
+        grid.appendChild(btn);
+      });
+    } else { // rank
+      ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"].forEach(function (rk) {
+        var btn = h("button", "teach-pick", rk);
+        btn.addEventListener("click", function () { teachAs(rk, "rank"); });
+        grid.appendChild(btn);
       });
     }
     body.appendChild(grid);
     el.teach.appendChild(body);
 
     var extra = h("div", "teach-extra");
-    if (!isDigit) {
-      extra.appendChild(mkbtn("It's a face-down card", function () { teachAs("back", "card"); }));
-      extra.appendChild(mkbtn("It's empty", function () { teachAs("empty", "card"); }));
-    }
-    extra.appendChild(mkbtn("Skip", function () { teaching = null; renderTeach([]); }));
+    extra.appendChild(mkbtn("Skip (ignore this)", function () {
+      // Remember the skipped shape so it never re-prompts until you clear it.
+      ignored.push({ kind: teaching.kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
+      saveJSON(LS_IGNORE, ignored);
+      teaching = null; el.teach.hidden = true;
+    }));
     el.teach.appendChild(extra);
   }
   function teachAs(label, kind) {
     if (!teaching) return;
-    templates.push({ label: label, kind: kind || "card", red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
+    templates.push({ label: label, kind: kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
     saveJSON(LS_TEMPLATES, templates);
     stab[teaching.key] = null; // force re-evaluate
     teaching = null;
-    setStatus("Learned it. It'll be recognised automatically from now on.");
+    setStatus("Learned it — recognised automatically from now on.");
   }
 
   // ---------- open / close ----------
@@ -649,6 +807,13 @@
   // Expose a tiny hook for automated testing (no effect in normal use).
   window.PokerWatch = {
     _signature: signature, _classify: classify, _labelToId: labelToId, _readNumber: readNumber,
+    _recognizeCard: recognizeCard, _ignored: function () { return ignored; },
+    _cardParts: function (regionImg) {
+      var corner = subImage(regionImg, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1);
+      var mask = inkMask(corner, estimateBg(corner));
+      var bands = rowBands(mask, corner.width, corner.height);
+      return { cornerW: corner.width, cornerH: corner.height, bands: bands.map(function (b) { return [b.y0, b.y1]; }) };
+    },
     _teach: function (label, sig, kind) { templates.push({ label: label, kind: kind || "card", red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
