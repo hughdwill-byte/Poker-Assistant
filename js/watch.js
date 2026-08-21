@@ -200,7 +200,9 @@
   }
   // Segment ink columns into glyph x-ranges.
   function segmentGlyphs(mask, w, h) {
-    var onThr = Math.max(1, h * 0.06), glyphs = [], run = null;
+    // Low threshold so a small decimal point / comma still registers as its own
+    // column (otherwise 1.2M loses the dot and reads as 12M).
+    var onThr = Math.max(1, h * 0.03), glyphs = [], run = null;
     for (var x = 0; x < w; x++) {
       var c = 0; for (var y = 0; y < h; y++) c += mask[y * w + x];
       var on = c >= onThr;
@@ -315,6 +317,20 @@
     if (run) bands.push(run);
     return bands;
   }
+  // Merge bands separated by only a tiny vertical gap (a thin part of one glyph,
+  // e.g. the waist of an A) so a single rank isn't split into rank + fake suit.
+  function mergeBands(bands) {
+    if (bands.length < 2) return bands;
+    var out = [bands[0]];
+    for (var i = 1; i < bands.length; i++) {
+      var prev = out[out.length - 1], cur = bands[i];
+      var gap = cur.y0 - prev.y1 - 1;
+      var hh = Math.max(prev.y1 - prev.y0, cur.y1 - cur.y0) + 1;
+      if (gap <= Math.max(1, hh * 0.18)) prev.y1 = cur.y1; // same glyph
+      else out.push(cur);
+    }
+    return out;
+  }
   function colBounds(mask, w, y0, y1) {
     var x0 = w, x1 = -1;
     for (var x = 0; x < w; x++) for (var y = y0; y <= y1; y++) if (mask[y * w + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; break; }
@@ -337,7 +353,7 @@
   function readRankSuit(img) {
     var cw = img.width, ch = img.height;
     var mask = inkMask(img, estimateBg(img));
-    var bands = rowBands(mask, cw, ch);
+    var bands = mergeBands(rowBands(mask, cw, ch));
     if (!bands.length) return { status: "unknown" };
     var rankBand = bands[0];
     var suitBand = bands.length >= 2 ? bands[1] : null; // suit sits just under the rank
@@ -444,6 +460,7 @@
       if (st && st.val === val) st.count++;
       else stab[key] = st = { val: val, count: 1 };
       st.res = res;
+      st.cardImg = img; // kept so a manual correction can teach from this frame
       if (st.count >= 2) {
         if (res.status === "card") setSlot(reading, key, res.id);
         else if (res.status === "empty") setSlot(reading, key, null);
@@ -564,7 +581,11 @@
     // Offscreen canvas used to pull pixels from the current video frame.
     work = document.createElement("canvas");
     wctx = work.getContext("2d", { willReadFrequently: true });
-    stage.appendChild(video); stage.appendChild(el.canvas);
+    // Magnifier loupe: a zoomed view under the cursor while you draw a box, so
+    // you can place the edges precisely even on small cards.
+    el.loupe = document.createElement("canvas"); el.loupe.className = "watch-loupe"; el.loupe.hidden = true;
+    el.loupe.width = 132; el.loupe.height = 132;
+    stage.appendChild(video); stage.appendChild(el.canvas); stage.appendChild(el.loupe);
     modal.appendChild(stage);
     bindCalibrationMouse();
 
@@ -588,13 +609,22 @@
     chipGroup("Seats — players in/out (optional)", SEAT_KEYS, " wseat");
     modal.appendChild(el.chips);
 
-    // Live results strip
+    // Live results strip. Click any card slot to correct/teach it by hand.
     el.strip = h("div", "watch-strip");
+    el.strip.addEventListener("click", function (e) {
+      var chip = e.target.closest && e.target.closest("[data-key]");
+      if (chip) openCorrect(chip.getAttribute("data-key"));
+    });
     modal.appendChild(el.strip);
 
     // Teach panel
     el.teach = h("div", "watch-teach"); el.teach.hidden = true;
     modal.appendChild(el.teach);
+
+    // Manual-correction popup: click any card in the live strip to override
+    // what it read and teach the right card at the same time.
+    el.correct = h("div", "watch-teach watch-correct"); el.correct.hidden = true;
+    modal.appendChild(el.correct);
 
     // Seat presence row
     var seatRow = h("div", "watch-seatrow");
@@ -645,6 +675,11 @@
     el.dockVideo = h("div", "watch-dock-video");
     dock.appendChild(el.dockVideo);
     el.dockStrip = h("div", "watch-strip watch-dock-strip");
+    // The dock is a mirror; to correct a card, expand back to the full panel.
+    el.dockStrip.addEventListener("click", function (e) {
+      var chip = e.target.closest && e.target.closest("[data-key]");
+      if (chip) { openModal(); openCorrect(chip.getAttribute("data-key")); }
+    });
     dock.appendChild(el.dockStrip);
     document.body.appendChild(dock);
 
@@ -716,6 +751,33 @@
     var r = video.getBoundingClientRect();
     return { left: r.left, top: r.top, w: r.width, h: r.height };
   }
+  // Magnifier: draw a zoomed crop of the live frame around the cursor, with a
+  // crosshair, so box edges can be placed on small cards precisely.
+  function drawLoupe(p) {
+    if (!el.loupe || !video) return;
+    if (!grabFrame()) return;                 // refresh the source frame
+    var vw = work.width, vh = work.height;
+    if (!vw || !vh) return;
+    var srcX = (p.x / p.W) * vw, srcY = (p.y / p.H) * vh;
+    var srcHalf = 24;                         // half-window of source px shown
+    var sx = Math.max(0, Math.min(vw - srcHalf * 2, srcX - srcHalf));
+    var sy = Math.max(0, Math.min(vh - srcHalf * 2, srcY - srcHalf));
+    var L = el.loupe.width, ctx = el.loupe.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, L, L);
+    ctx.drawImage(work, sx, sy, srcHalf * 2, srcHalf * 2, 0, 0, L, L);
+    // crosshair at the true cursor position within the window
+    var cxp = ((srcX - sx) / (srcHalf * 2)) * L, cyp = ((srcY - sy) / (srcHalf * 2)) * L;
+    ctx.strokeStyle = "rgba(245,185,59,.95)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cxp, 0); ctx.lineTo(cxp, L); ctx.moveTo(0, cyp); ctx.lineTo(L, cyp); ctx.stroke();
+    // keep the loupe near the cursor but out from under it, flipping at edges
+    var off = 18, lx = p.x + off, ly = p.y + off;
+    if (lx + L > p.W) lx = p.x - off - L;
+    if (ly + L > p.H) ly = p.y - off - L;
+    el.loupe.style.left = Math.max(0, lx) + "px";
+    el.loupe.style.top = Math.max(0, ly) + "px";
+    el.loupe.hidden = false;
+  }
   function drawOverlay() {
     if (!el.canvas || !video) return;
     var r = video.getBoundingClientRect();
@@ -748,11 +810,15 @@
       var p = pos(e); start = p; dragging = { x: p.x, y: p.y, w: 0, h: 0 }; e.preventDefault();
     });
     c.addEventListener("mousemove", function (e) {
-      if (!start) return; var p = pos(e);
+      var p = pos(e);
+      if (calibrating && selectedKey) drawLoupe(p);      // magnify under the cursor
+      if (!start) return;
       dragging = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
       drawOverlay();
     });
+    c.addEventListener("mouseleave", function () { if (el.loupe) el.loupe.hidden = true; });
     window.addEventListener("mouseup", function (e) {
+      if (el.loupe) el.loupe.hidden = true;
       if (!start) return; var p = pos(e);
       var W = start.W, H = start.H;
       var x = Math.min(start.x, p.x) / W, y = Math.min(start.y, p.y) / H;
@@ -783,7 +849,9 @@
       else if (st.res.status === "card") { chip.textContent = Poker.cardLabel(st.res.id); chip.classList.add(cardColor(st.res.id)); }
       else if (st.res.status === "empty") { chip.textContent = "·"; chip.classList.add("off"); }
       else { chip.textContent = "?"; chip.classList.add("q"); }
-      chip.title = REGION_LABELS[key];
+      // Any boxed card slot can be tapped to correct/teach it by hand.
+      if (regions[key]) { chip.setAttribute("data-key", key); chip.classList.add("clickable"); }
+      chip.title = REGION_LABELS[key] + (regions[key] ? " — click to set/correct" : "");
       el.strip.appendChild(chip);
       if (key === "hero1") el.strip.appendChild(h("span", "strip-sep", "|"));
     });
@@ -831,52 +899,142 @@
     var id = teaching.key + ":" + teaching.kind;
     if (id === renderedTeachId) return;
     renderedTeachId = id;
+    teachKind = teaching.kind;   // the recogniser's guess; you can switch it
+    drawTeach();
+  }
+  var teachKind = null;
+  function drawTeach() {
+    if (!teaching) return;
     el.teach.hidden = false;
     el.teach.innerHTML = "";
-    var kind = teaching.kind; // 'rank' | 'suit' | 'digit'
-    var titles = { rank: "the rank (corner number/letter)", suit: "the suit shape", digit: "a digit" };
+    var isCard = teaching.kind !== "digit";
     el.teach.appendChild(h("div", "teach-title",
-      "Unrecognised " + (titles[kind] || "glyph") + " in " + REGION_LABELS[teaching.key] +
-      " — tap what it is (just once each):"));
+      "Unrecognised in " + REGION_LABELS[teaching.key] +
+      (isCard ? " — pick it, switch Rank/Suit, or Re-box:" : " — pick the digit, or Re-box:")));
+    el.teach.appendChild(h("div", "teach-hint",
+      "This is exactly what the box captured (magnified). If it's cut off, blank " +
+      "or grabbing the wrong thing, use ↻ Re-box to redraw it — zoom the poker " +
+      "window first for a bigger, clearer target."));
     var body = h("div", "teach-body");
     var thumb = h("canvas", "teach-thumb");
     thumb.width = teaching.img.width; thumb.height = teaching.img.height;
     thumb.getContext("2d").putImageData(teaching.img, 0, 0);
     body.appendChild(thumb);
 
-    var grid = h("div", "teach-grid " + kind);
-    if (kind === "digit") {
-      ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "K", "M"].forEach(function (g) {
+    var right = h("div", "teach-right");
+    if (isCard) {
+      var seg = h("div", "teach-typeseg");
+      [["rank", "Rank"], ["suit", "Suit"]].forEach(function (t) {
+        var tb = h("button", "teach-type" + (teachKind === t[0] ? " active" : ""), t[1]);
+        tb.addEventListener("click", function () { teachKind = t[0]; drawTeach(); });
+        seg.appendChild(tb);
+      });
+      right.appendChild(seg);
+    }
+    var grid = h("div", "teach-grid " + teachKind);
+    if (teachKind === "digit") {
+      ["0","1","2","3","4","5","6","7","8","9","K","M"].forEach(function (g) {
         var btn = h("button", "teach-pick", g);
-        btn.title = (g === "K" ? "thousands (K)" : g === "M" ? "millions (M)" : "");
         btn.addEventListener("click", function () { teachAs(g, "digit"); });
         grid.appendChild(btn);
       });
-    } else if (kind === "suit") {
-      [["s", "♠", "black"], ["h", "♥", "red"], ["d", "♦", "red"], ["c", "♣", "black"]].forEach(function (s) {
+    } else if (teachKind === "suit") {
+      [["s","♠","black"],["h","♥","red"],["d","♦","red"],["c","♣","black"]].forEach(function (s) {
         var btn = h("button", "teach-pick " + s[2], s[1]);
         btn.addEventListener("click", function () { teachAs(s[0], "suit"); });
         grid.appendChild(btn);
       });
-    } else { // rank
-      ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"].forEach(function (rk) {
+    } else {
+      ["A","K","Q","J","10","9","8","7","6","5","4","3","2"].forEach(function (rk) {
         var btn = h("button", "teach-pick", rk);
         btn.addEventListener("click", function () { teachAs(rk, "rank"); });
         grid.appendChild(btn);
       });
     }
-    body.appendChild(grid);
+    right.appendChild(grid);
+    body.appendChild(right);
     el.teach.appendChild(body);
 
     var extra = h("div", "teach-extra");
+    extra.appendChild(mkbtn("↻ Re-box this region", function () {
+      var key = teaching.key;
+      teaching = null; renderedTeachId = null; el.teach.hidden = true; el.teach.innerHTML = "";
+      stab[key] = null;
+      selectedKey = key; calibrating = true; refreshChips();
+      setStatus("Re-drawing " + REGION_LABELS[key] + " — drag a new box (zoom the poker window for a bigger target).");
+      drawOverlay();
+    }));
     extra.appendChild(mkbtn("Skip (ignore this)", function () {
-      // Remember the skipped shape so it never re-prompts until you clear it.
       ignored.push({ kind: teaching.kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
       saveJSON(LS_IGNORE, ignored);
       teaching = null; renderedTeachId = null; el.teach.hidden = true; el.teach.innerHTML = "";
     }));
     el.teach.appendChild(extra);
   }
+
+  // Pull both glyphs (rank + suit) out of a card region image, for corrections.
+  function extractGlyphs(img) {
+    function grab(im) {
+      var cw = im.width, ch = im.height;
+      var mask = inkMask(im, estimateBg(im));
+      var bands = mergeBands(rowBands(mask, cw, ch));
+      if (!bands.length) return null;
+      var rb = bands[0], sb = bands.length >= 2 ? bands[1] : null;
+      var rcb = colBounds(mask, cw, rb.y0, rb.y1);
+      var o = { rankSig: { vec: glyphVec(mask, cw, rcb.x0, rb.y0, rcb.x1, rb.y1), red: 0 } };
+      if (sb) {
+        var scb = colBounds(mask, cw, sb.y0, sb.y1);
+        o.suitSig = { vec: glyphVec(mask, cw, scb.x0, sb.y0, scb.x1, sb.y1), red: boxColor(im, scb.x0, sb.y0, scb.x1, sb.y1).red };
+      }
+      return o;
+    }
+    var c = grab(subImage(img, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
+    if (c && c.suitSig) return c;
+    var w = grab(img);
+    if (w && w.suitSig) return w;
+    return c || w;
+  }
+  // Correct a card region to a specific card AND teach its glyphs.
+  function correctCard(key, rankLabel, suitLabel) {
+    var st = stab[key], learned = false;
+    if (st && st.cardImg) {
+      var g = extractGlyphs(st.cardImg);
+      if (g && g.rankSig) { templates.push({ label: rankLabel, kind: "rank", red: 0, vec: Array.prototype.slice.call(g.rankSig.vec) }); learned = true; }
+      if (g && g.suitSig) { templates.push({ label: suitLabel, kind: "suit", red: g.suitSig.red, vec: Array.prototype.slice.call(g.suitSig.vec) }); }
+      if (learned) saveJSON(LS_TEMPLATES, templates);
+      st.val = null;
+    }
+    setCardValue(key, Poker.makeId(RANK_VAL[rankLabel], SUIT_CODE[suitLabel]));
+    setStatus("Set " + REGION_LABELS[key] + " = " + rankLabel + suitLabel + (learned ? " and learned it." : "."));
+  }
+  function setCardValue(key, idOrNull) {
+    var reading = {};
+    if (key === "hero0") reading.hero = [idOrNull, undefined];
+    else if (key === "hero1") reading.hero = [undefined, idOrNull];
+    else { reading.board = [undefined, undefined, undefined, undefined, undefined]; reading.board[+key.slice(1)] = idOrNull; }
+    API.applyReading(reading);
+  }
+  // Correction popup: set the true card for a region (also teaches it).
+  function openCorrect(key) {
+    if (REGION_KEYS.indexOf(key) < 0) return;
+    el.correct.innerHTML = "";
+    el.correct.appendChild(h("div", "teach-title", "Set " + REGION_LABELS[key] + " to the right card (this teaches it too):"));
+    var grid = h("div", "correct-grid");
+    [["s","♠","black"],["h","♥","red"],["d","♦","red"],["c","♣","black"]].forEach(function (s) {
+      ["A","K","Q","J","10","9","8","7","6","5","4","3","2"].forEach(function (rk) {
+        var btn = h("button", "teach-pick " + s[2], rk + s[1]);
+        btn.addEventListener("click", function () { correctCard(key, rk, s[0]); closeCorrect(); });
+        grid.appendChild(btn);
+      });
+    });
+    el.correct.appendChild(grid);
+    var row = h("div", "teach-extra");
+    row.appendChild(mkbtn("Clear this card", function () { setCardValue(key, null); closeCorrect(); }));
+    row.appendChild(mkbtn("Cancel", closeCorrect));
+    el.correct.appendChild(row);
+    el.correct.hidden = false;
+  }
+  function closeCorrect() { if (el.correct) el.correct.hidden = true; }
   function teachAs(label, kind) {
     if (!teaching) return;
     templates.push({ label: label, kind: kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });

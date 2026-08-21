@@ -493,6 +493,12 @@ body {
 .watch-stage { position: relative; width: 100%; background: #05070b; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-height: 180px; }
 .watch-video { display: block; width: 100%; height: auto; }
 .watch-canvas { position: absolute; left: 0; top: 0; cursor: crosshair; }
+.watch-loupe {
+  position: absolute; width: 132px; height: 132px; pointer-events: none; z-index: 3;
+  border: 2px solid var(--accent); border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  image-rendering: pixelated; background: #05070b;
+}
+.watch-loupe[hidden] { display: none; }
 
 .watch-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .watch-chip {
@@ -515,6 +521,7 @@ body {
 .watch-teach { background: var(--panel-2); border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 .watch-teach[hidden] { display: none; }
 .teach-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.teach-hint { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin: -4px 0 10px; }
 .teach-body { display: flex; gap: 12px; align-items: flex-start; }
 .teach-thumb { width: 64px; height: auto; border-radius: 6px; border: 1px solid var(--line); background: #fff; flex: 0 0 auto; image-rendering: pixelated; }
 .teach-grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 4px; flex: 1; }
@@ -522,6 +529,21 @@ body {
 .teach-pick.red { color: var(--card-red); }
 .teach-pick:hover { outline: 2px solid var(--accent); }
 .teach-extra { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+/* Rank / Suit switch + column that holds it above the picker grid */
+.teach-right { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.teach-typeseg { display: inline-flex; align-self: flex-start; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.teach-type { background: transparent; color: var(--muted); border: none; padding: 5px 14px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.teach-type + .teach-type { border-left: 1px solid var(--line); }
+.teach-type.active { background: var(--accent); color: #1a1204; }
+
+/* Click-to-correct: card slots in the live strip are tappable */
+.strip-card.clickable { cursor: pointer; }
+.strip-card.clickable:hover { outline: 2px solid var(--accent); }
+
+/* Manual-correction popup: full 52-card grid */
+.correct-grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 4px; margin: 4px 0 2px; }
+@media (max-width: 700px) { .correct-grid { grid-template-columns: repeat(7, 1fr); } }
 
 .watch-settings { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 6px 0; }
 .watch-field { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
@@ -587,6 +609,8 @@ body {
 .strip-num.q { color: var(--accent); border-color: var(--accent); }
 .teach-grid.digit { grid-template-columns: repeat(7, 1fr); }
 .teach-grid.digit .teach-pick { font-size: 15px; padding: 8px 0; }
+.teach-grid.suit { grid-template-columns: repeat(4, 1fr); }
+.teach-grid.suit .teach-pick { font-size: 18px; padding: 8px 0; }
 
 /* Watch mode live dock (shown when the panel is closed but still capturing) */
 .watch-dock {

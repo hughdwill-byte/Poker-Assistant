@@ -122,26 +122,40 @@ different site/tab than the app itself and update the odds live.
 **How to use it** (desktop Chrome / Edge / Firefox):
 1. Click **👁 Watch**, then **Share a tab / window** and pick your poker window.
 2. **Calibrate once:** click a box below the preview (e.g. *Your card 1*), then
-   drag a rectangle over it. Do this for your two cards, the five board spots,
-   and optionally the **Pot** and **My-stack** numbers. Boxes are saved.
+   drag a rectangle over it. A **magnifier loupe** follows your cursor so you
+   can place the edges precisely even on small cards. Do this for your two
+   cards, the five board spots, and optionally the **Pot** and **My-stack**
+   numbers. Boxes are saved.
 3. Click **Start watching.** When it meets a card *or digit* it doesn't know it
-   shows the crop and asks you to label it **once**; after that it's automatic.
-4. **Close the panel with ✕** — it shrinks to a small **live dock** (bottom-left) and keeps watching, so you can
+   shows the exact crop (magnified) and asks you to label it **once**; after
+   that it's automatic. If the recogniser has mislabelled what it found (say it
+   asks for a *suit* but you're looking at a *rank*), use the **Rank / Suit**
+   switch; if the crop is cut off or grabbing the wrong thing, hit
+   **↻ Re-box** to redraw that one box.
+4. **Fix any card in one click.** The live strip shows every card it read —
+   click one to open a full 52-card picker, set the true card, and it both
+   corrects the table **and learns** that card for next time. This works for
+   your hole cards *and* the board.
+5. **Close the panel with ✕** — it shrinks to a small **live dock** (bottom-left) and keeps watching, so you can
    see the main table update live:
    your cards, the board, the pot, and your stack all fill in, and a big
-   **action banner** under your cards shows FOLD / CHECK / CALL / BET.
-5. Mark the **dealer** with the **D** button on a seat and the advice shows your
+   **action banner** under your cards shows FOLD / CHECK / CALL / BET. (Click a
+   card in the dock to expand and correct it.)
+6. Mark the **dealer** with the **D** button on a seat and the advice shows your
    table position (button / blinds / cutoff …).
+
+Numbers are read with a decimal point, so **1.2M** is read as 1,200,000 (not
+12,000,000), and **K** / **M** suffixes and thousands separators are handled.
 
 **Honest limits.** This is a heuristic template matcher, not a trained model:
 accuracy depends on your calibration and what you teach it, and it can misread —
-glance at the live strip in the panel. It reads **your cards, the board, the pot
-and your stack** (the numbers that drive the maths). Reading every opponent's
-stack and auto-detecting the dealer button by vision aren't done yet (set the D
-manually). It needs a desktop browser (iOS Safari can't screen-share) and it
-never acts for you — it only fills in what you'd otherwise type. Use it for
-play-money, practice, or hand-replay study, and follow the rules of any site
-you're on.
+glance at the live strip and one-click any card to fix and teach it. It reads
+**your cards, the board, the pot and your stack** (the numbers that drive the
+maths). Reading every opponent's stack and auto-detecting the dealer button by
+vision aren't done yet (set the D manually). It needs a desktop browser (iOS
+Safari can't screen-share) and it never acts for you — it only fills in what
+you'd otherwise type. Use it for play-money, practice, or hand-replay study, and
+follow the rules of any site you're on.
 
 ---
 
