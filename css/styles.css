@@ -604,3 +604,13 @@ body {
 .watch-dock-strip { padding: 7px 9px; gap: 4px; }
 .watch-dock-strip .strip-card { min-width: 22px; padding: 3px 4px; font-size: 11px; }
 .watch-dock-strip .strip-num { padding: 3px 6px; font-size: 10.5px; }
+
+/* Watch mode: seat presence detection */
+.watch-chip.seat.set { color: #a78bfa; border-color: rgba(167,139,250,.5); }
+.watch-seatrow { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 4px 0 10px; }
+.strip-seat {
+  padding: 4px 8px; border-radius: 7px; border: 1px solid var(--line);
+  background: rgba(255,255,255,.05); color: var(--muted); font-weight: 700; font-size: 12px;
+}
+.strip-seat.on { color: #c4b5fd; border-color: rgba(167,139,250,.55); }
+.strip-seat.nobase { opacity: .55; }

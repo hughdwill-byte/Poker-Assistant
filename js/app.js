@@ -716,18 +716,20 @@
         if (bv !== undefined && state.board[i] !== bv) { state.board[i] = bv; changed = true; }
       }
     }
+    // Player count first, so any active-flag changes below land on the right seats.
+    if (typeof reading.numPlayers === "number") {
+      var n = Math.max(2, Math.min(10, reading.numPlayers | 0));
+      if (n !== state.numPlayers) {
+        state.numPlayers = n; $("in-players").value = n; $("players-val").textContent = n;
+        ensurePlayers();
+        changed = true;
+      }
+    }
     if (reading.actives) {
       reading.actives.forEach(function (a) {
         var pl = state.players[a.index];
         if (pl && pl.active !== a.active) { pl.active = a.active; changed = true; }
       });
-    }
-    if (typeof reading.numPlayers === "number") {
-      var n = Math.max(2, Math.min(10, reading.numPlayers | 0));
-      if (n !== state.numPlayers) {
-        state.numPlayers = n; $("in-players").value = n; $("players-val").textContent = n;
-        changed = true;
-      }
     }
     if (typeof reading.pot === "number" && reading.pot >= 0 && state.pot !== reading.pot) {
       state.pot = reading.pot; $("in-pot").value = reading.pot; changed = true;

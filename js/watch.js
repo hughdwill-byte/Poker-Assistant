@@ -34,23 +34,30 @@
   var REGION_KEYS = ["hero0", "hero1", "b0", "b1", "b2", "b3", "b4"];
   // Numeric regions read by digit OCR.
   var NUM_KEYS = ["pot", "mystack"];
-  var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS);
+  // Seat "presence" regions - a spot on each seat that shows background when
+  // empty and the player's avatar when someone is sitting there. Max 6 seats.
+  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4", "s5"];
+  var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS, SEAT_KEYS);
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
     pot: "Pot (number)", mystack: "My stack (number)",
+    s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5", s5: "Seat 6",
   };
 
   // ---------- Persistence ----------
   var LS_REGIONS = "pokerwatch.regions.v1";
   var LS_TEMPLATES = "pokerwatch.templates.v2"; // v2: rank/suit/digit glyphs
   var LS_IGNORE = "pokerwatch.ignore.v1";
+  var LS_SEATBASE = "pokerwatch.seatbase.v1";
   function loadJSON(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
   var regions = loadJSON(LS_REGIONS, {});     // key -> {x,y,w,h} normalised
   var templates = loadJSON(LS_TEMPLATES, []); // [{kind, label, red, vec:[...]}]
   var ignored = loadJSON(LS_IGNORE, []);      // skipped glyph signatures (won't re-prompt)
+  var seatBase = loadJSON(LS_SEATBASE, {});   // seat key -> { vec } empty-seat fingerprint
+  var occThr = 0.55;                          // how different from empty = "occupied"
 
   // ---------- Card label <-> id ----------
   var RANK_FROM = { A: 14, K: 13, Q: 12, J: 11, T: 10, "10": 10, "9": 9, "8": 8, "7": 7, "6": 6, "5": 5, "4": 4, "3": 3, "2": 2 };
@@ -450,6 +457,30 @@
         unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
     });
+    // Seat presence: a seat is "occupied" when its spot differs from the empty
+    // baseline. Drives player count + active flags (people coming/going).
+    var heroIdx = API.getInfo ? API.getInfo().heroIndex : 0;
+    var seatDefs = 0, actives = [];
+    SEAT_KEYS.forEach(function (key, idx) {
+      var rect = regions[key];
+      if (!rect) return;
+      seatDefs++;
+      var base = seatBase[key];
+      var sig = signature(regionImageData(rect));
+      var occ;
+      if (idx === heroIdx) occ = true;          // you are always at your seat
+      else if (!base) occ = true;               // no baseline yet -> assume present
+      else occ = rms(base.vec, sig.vec) > occThr;
+      var st = stab[key];
+      var val = "seat:" + (occ ? 1 : 0);
+      if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
+      st.occ = occ; st.sig = sig;
+      if (st.count >= 2) actives.push({ index: idx, active: occ });
+    });
+    if (seatDefs >= 2) {
+      reading.numPlayers = Math.min(6, seatDefs);
+      if (actives.length) reading.actives = actives;
+    }
     API.applyReading(reading);
     renderStrip();
     renderTeach(unknowns);
@@ -525,7 +556,8 @@
     // Region chips
     el.chips = h("div", "watch-chips");
     ALL_KEYS.forEach(function (key) {
-      var c = h("button", "watch-chip" + (NUM_KEYS.indexOf(key) >= 0 ? " num" : ""), REGION_LABELS[key]);
+      var cls = NUM_KEYS.indexOf(key) >= 0 ? " num" : SEAT_KEYS.indexOf(key) >= 0 ? " seat" : "";
+      var c = h("button", "watch-chip" + cls, REGION_LABELS[key]);
       c.dataset.key = key;
       c.addEventListener("click", function () { selectedKey = key; calibrating = true; refreshChips(); setStatus("Drag a box over " + REGION_LABELS[key] + "."); drawOverlay(); });
       el.chips.appendChild(c);
@@ -540,12 +572,21 @@
     el.teach = h("div", "watch-teach"); el.teach.hidden = true;
     modal.appendChild(el.teach);
 
+    // Seat presence row
+    var seatRow = h("div", "watch-seatrow");
+    seatRow.appendChild(mkbtn("Capture empty seats", captureEmptySeats, "primary"));
+    seatRow.appendChild(labelWrap("Seat sensitivity", seatSlider()));
+    modal.appendChild(seatRow);
+
     // Settings row
     var settings = h("div", "watch-settings");
     settings.appendChild(labelWrap("Capture rate", rateSlider()));
     settings.appendChild(labelWrap("Match sensitivity", sensSlider()));
     var clear = h("div", "watch-clearbtns");
-    clear.appendChild(mkbtn("Clear boxes", function () { regions = {}; saveJSON(LS_REGIONS, regions); refreshChips(); drawOverlay(); setStatus("Calibration cleared."); }));
+    clear.appendChild(mkbtn("Clear boxes", function () {
+      regions = {}; seatBase = {}; saveJSON(LS_REGIONS, regions); saveJSON(LS_SEATBASE, seatBase);
+      refreshChips(); drawOverlay(); setStatus("Calibration cleared.");
+    }));
     clear.appendChild(mkbtn("Forget taught cards", function () {
       templates = []; ignored = []; saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
       setStatus("Taught glyphs + skips cleared.");
@@ -554,11 +595,15 @@
     modal.appendChild(settings);
 
     modal.appendChild(h("p", "watch-note",
-      "One-time setup per site: drag a box over each of your two cards, the five board spots, " +
-      "and (optional) the Pot and My-stack numbers. It reads the corner rank + suit, so you only " +
-      "teach ~17 glyphs once (13 ranks + 4 suits), not every card. Tip: zoom the poker window " +
-      "(Ctrl/Cmd +) so the cards are bigger - accuracy improves a lot. Close with ✕ and it keeps " +
-      "watching from a small dock. Any misread card can be fixed with one tap on the table."));
+      "One-time setup per site: box your two cards, the five board spots, and (optional) the Pot " +
+      "and My-stack numbers. It reads the corner rank + suit, so you teach ~17 glyphs once, not " +
+      "every card. Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger - accuracy improves " +
+      "a lot. Any misread card is one tap to fix on the table."));
+    modal.appendChild(h("p", "watch-note",
+      "Players coming & going: box a spot on each seat (Seat 1-6) that shows the table background " +
+      "when empty and the player's avatar when taken. With those seats empty, press Capture empty " +
+      "seats. Then a seat flips on/off as players sit down or leave, and the matching seat on your " +
+      "table activates or greys out. Mark your own seat with its ⌂ button."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
@@ -600,6 +645,27 @@
     s.addEventListener("input", function () { gthr = +s.value / 100; });
     return s;
   }
+  function seatSlider() {
+    // How different a seat spot must be from its empty baseline to count as
+    // occupied. Lower = more sensitive (detects a seated player more easily).
+    var s = document.createElement("input"); s.type = "range"; s.min = 20; s.max = 120; s.value = Math.round(occThr * 100);
+    s.addEventListener("input", function () { occThr = +s.value / 100; });
+    return s;
+  }
+  // Snapshot the current appearance of every calibrated seat spot as its
+  // "empty" baseline. Do this when those seats have nobody sitting there.
+  function captureEmptySeats() {
+    if (!grabFrame()) { setStatus("Share a tab first, then capture."); return; }
+    var n = 0;
+    SEAT_KEYS.forEach(function (key) {
+      if (!regions[key]) return;
+      seatBase[key] = { vec: Array.prototype.slice.call(signature(regionImageData(regions[key])).vec) };
+      n++;
+    });
+    saveJSON(LS_SEATBASE, seatBase);
+    setStatus(n ? ("Captured empty baseline for " + n + " seat(s). Seats now toggle as players come and go.")
+                : "Calibrate seat boxes first (Seat 1-6), then capture.");
+  }
 
   function setStatus(t) { if (el.status) el.status.textContent = t; }
   function updateButtons() {
@@ -635,6 +701,7 @@
     ALL_KEYS.forEach(function (key) {
       var rect = regions[key]; if (!rect) return;
       ctx.strokeStyle = key === selectedKey ? "#f5b93b"
+        : SEAT_KEYS.indexOf(key) >= 0 ? "#a78bfa"
         : NUM_KEYS.indexOf(key) >= 0 ? "#f5b93b"
         : key.indexOf("hero") === 0 ? "#4ade80" : "#60a5fa";
       ctx.lineWidth = 2;
@@ -705,6 +772,22 @@
         (key === "pot" ? "Pot " : "Stack ") + txt);
       el.strip.appendChild(chip);
     });
+    // Seat presence readout.
+    var anySeat = SEAT_KEYS.some(function (k) { return regions[k]; });
+    if (anySeat) {
+      el.strip.appendChild(h("span", "strip-sep", "·"));
+      SEAT_KEYS.forEach(function (key, idx) {
+        if (!regions[key]) return;
+        var st = stab[key];
+        var occ = st && typeof st.occ === "boolean" ? st.occ : true;
+        var hasBase = !!seatBase[key];
+        var chip = h("span", "strip-seat" + (occ ? " on" : ""),
+          (idx + 1) + (occ ? "●" : "○"));
+        chip.title = "Seat " + (idx + 1) + (hasBase ? "" : " (capture empty baseline)");
+        if (!hasBase) chip.classList.add("nobase");
+        el.strip.appendChild(chip);
+      });
+    }
     if (el.dockStrip) el.dockStrip.innerHTML = el.strip.innerHTML; // mirror into the dock
   }
   function cardColor(id) { return Poker.SUIT_COLOR[Poker.suitOf(id)]; }
