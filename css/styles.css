@@ -606,7 +606,7 @@ body {
 .watch-dock-strip .strip-num { padding: 3px 6px; font-size: 10.5px; }
 
 /* Watch mode: seat presence detection */
-.watch-chip.seat.set { color: #a78bfa; border-color: rgba(167,139,250,.5); }
+.watch-chip.wseat.set { color: #a78bfa; border-color: rgba(167,139,250,.5); }
 .watch-seatrow { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 4px 0 10px; }
 .strip-seat {
   padding: 4px 8px; border-radius: 7px; border: 1px solid var(--line);

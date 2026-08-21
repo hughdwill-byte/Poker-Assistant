@@ -585,7 +585,7 @@
     }
     chipGroup("Your cards & board", REGION_KEYS, "");
     chipGroup("Numbers (optional)", NUM_KEYS, " num");
-    chipGroup("Seats — players in/out (optional)", SEAT_KEYS, " seat");
+    chipGroup("Seats — players in/out (optional)", SEAT_KEYS, " wseat");
     modal.appendChild(el.chips);
 
     // Live results strip
