@@ -614,3 +614,8 @@ body {
 }
 .strip-seat.on { color: #c4b5fd; border-color: rgba(167,139,250,.55); }
 .strip-seat.nobase { opacity: .55; }
+
+/* Watch mode: grouped calibration chips */
+.watch-chips { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.chip-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 5px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }

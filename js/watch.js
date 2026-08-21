@@ -148,7 +148,7 @@
 
   var threshold = 0.62;  // whole-region present match (legacy)
   var gthr = 0.42;       // rank/digit match distance (must absorb red-vs-black edge noise)
-  var sthr = 0.30;       // suit match distance (suits are single-colour, so tighter)
+  var sthr = 0.32;       // suit match distance (single-colour, so fairly tight)
 
   function classify(sig) {
     // A face-up card is mostly a white body regardless of felt colour; if there
@@ -331,39 +331,50 @@
     }
     return (best && bs < (kind === "suit" ? sthr : gthr)) ? best.label : null;
   }
-  // Returns {status:'empty'|'card'|'unknown', id?, label?, teach?, img?, sig?}
-  function recognizeCard(regionImg) {
-    var whole = signature(regionImg);
-    if (!(whole.white > 0.1 || whole.red > 0.05)) return { status: "empty" };
-
-    var corner = subImage(regionImg, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1);
-    var cw = corner.width, ch = corner.height;
-    var mask = inkMask(corner, estimateBg(corner));
+  // Read the rank (top ink band) and the suit (the band right below it) inside
+  // an image. Works whether `img` is a whole card's corner or a tightly-boxed
+  // rank+suit index (which is how you box a card that's partly hidden).
+  function readRankSuit(img) {
+    var cw = img.width, ch = img.height;
+    var mask = inkMask(img, estimateBg(img));
     var bands = rowBands(mask, cw, ch);
     if (!bands.length) return { status: "unknown" };
-
     var rankBand = bands[0];
-    var suitBand = bands.length >= 2 ? bands[bands.length - 1] : null;
+    var suitBand = bands.length >= 2 ? bands[1] : null; // suit sits just under the rank
 
     var rcb = colBounds(mask, cw, rankBand.y0, rankBand.y1);
-    var rankImg = cropRect(corner, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1);
+    var rankImg = cropRect(img, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1);
     var rankSig = { vec: glyphVec(mask, cw, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1), red: 0 };
     var rank = matchKind(rankSig, "rank", false);
     if (!rank) {
       if (isIgnored(rankSig, "rank")) return { status: "unknown" };
       return { status: "unknown", teach: "rank", img: rankImg, sig: rankSig };
     }
-
     if (!suitBand) return { status: "unknown", teach: "suit", img: rankImg, sig: rankSig };
     var scb = colBounds(mask, cw, suitBand.y0, suitBand.y1);
-    var suitImg = cropRect(corner, scb.x0, suitBand.y0, scb.x1, suitBand.y1);
-    var suitSig = { vec: glyphVec(mask, cw, scb.x0, suitBand.y0, scb.x1, suitBand.y1), red: boxColor(corner, scb.x0, suitBand.y0, scb.x1, suitBand.y1).red };
+    var suitImg = cropRect(img, scb.x0, suitBand.y0, scb.x1, suitBand.y1);
+    var suitSig = { vec: glyphVec(mask, cw, scb.x0, suitBand.y0, scb.x1, suitBand.y1), red: boxColor(img, scb.x0, suitBand.y0, scb.x1, suitBand.y1).red };
     var suit = matchKind(suitSig, "suit", true);
     if (!suit) {
       if (isIgnored(suitSig, "suit")) return { status: "unknown" };
       return { status: "unknown", teach: "suit", img: suitImg, sig: suitSig };
     }
     return { status: "card", id: Poker.makeId(RANK_VAL[rank], SUIT_CODE[suit]), label: rank + suit };
+  }
+  // Returns {status:'empty'|'card'|'unknown', id?, label?, teach?, img?, sig?}
+  function recognizeCard(regionImg) {
+    var whole = signature(regionImg);
+    if (!(whole.white > 0.1 || whole.red > 0.05)) return { status: "empty" };
+    // Attempt 1: the corner of a full card (isolates the index from the big
+    // central pip). Attempt 2: treat the whole box as the index itself, which
+    // is how you'd box a card that's slid behind another.
+    var r1 = readRankSuit(subImage(regionImg, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
+    if (r1.status === "card") return r1;
+    var r2 = readRankSuit(regionImg);
+    if (r2.status === "card") return r2;
+    if (r1.teach === "suit") return r1;
+    if (r2.teach === "suit") return r2;
+    return r1.teach ? r1 : (r2.teach ? r2 : { status: "unknown" });
   }
 
   function isIgnored(sig, kind) {
@@ -458,28 +469,32 @@
       }
     });
     // Seat presence: a seat is "occupied" when its spot differs from the empty
-    // baseline. Drives player count + active flags (people coming/going).
-    var heroIdx = API.getInfo ? API.getInfo().heroIndex : 0;
-    var seatDefs = 0, actives = [];
-    SEAT_KEYS.forEach(function (key, idx) {
-      var rect = regions[key];
-      if (!rect) return;
-      seatDefs++;
-      var base = seatBase[key];
-      var sig = signature(regionImageData(rect));
-      var occ;
-      if (idx === heroIdx) occ = true;          // you are always at your seat
-      else if (!base) occ = true;               // no baseline yet -> assume present
-      else occ = rms(base.vec, sig.vec) > occThr;
-      var st = stab[key];
-      var val = "seat:" + (occ ? 1 : 0);
-      if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
-      st.occ = occ; st.sig = sig;
-      if (st.count >= 2) actives.push({ index: idx, active: occ });
-    });
-    if (seatDefs >= 2) {
-      reading.numPlayers = Math.min(6, seatDefs);
-      if (actives.length) reading.actives = actives;
+    // baseline. Only drives the table once you've captured a baseline (so
+    // calibrating seat boxes alone never changes your player count).
+    var seatReady = SEAT_KEYS.some(function (k) { return regions[k] && seatBase[k]; });
+    if (seatReady) {
+      var heroIdx = API.getInfo ? API.getInfo().heroIndex : 0;
+      var seatDefs = 0, actives = [];
+      SEAT_KEYS.forEach(function (key, idx) {
+        var rect = regions[key];
+        if (!rect) return;
+        seatDefs++;
+        var base = seatBase[key];
+        var sig = signature(regionImageData(rect));
+        var occ;
+        if (idx === heroIdx) occ = true;          // you are always at your seat
+        else if (!base) occ = true;               // this seat has no baseline -> assume present
+        else occ = rms(base.vec, sig.vec) > occThr;
+        var st = stab[key];
+        var val = "seat:" + (occ ? 1 : 0);
+        if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
+        st.occ = occ; st.sig = sig;
+        if (st.count >= 2) actives.push({ index: idx, active: occ });
+      });
+      if (seatDefs >= 2) {
+        reading.numPlayers = Math.min(6, seatDefs);
+        if (actives.length) reading.actives = actives;
+      }
     }
     API.applyReading(reading);
     renderStrip();
@@ -553,15 +568,24 @@
     modal.appendChild(stage);
     bindCalibrationMouse();
 
-    // Region chips
+    // Region chips, grouped so the (many) boxes stay readable.
     el.chips = h("div", "watch-chips");
-    ALL_KEYS.forEach(function (key) {
-      var cls = NUM_KEYS.indexOf(key) >= 0 ? " num" : SEAT_KEYS.indexOf(key) >= 0 ? " seat" : "";
-      var c = h("button", "watch-chip" + cls, REGION_LABELS[key]);
-      c.dataset.key = key;
-      c.addEventListener("click", function () { selectedKey = key; calibrating = true; refreshChips(); setStatus("Drag a box over " + REGION_LABELS[key] + "."); drawOverlay(); });
-      el.chips.appendChild(c);
-    });
+    function chipGroup(title, keys, cls) {
+      var g = h("div", "chip-group");
+      g.appendChild(h("div", "chip-group-title", title));
+      var row = h("div", "chip-row");
+      keys.forEach(function (key) {
+        var c = h("button", "watch-chip" + cls, REGION_LABELS[key]);
+        c.dataset.key = key;
+        c.addEventListener("click", function () { selectedKey = key; calibrating = true; refreshChips(); setStatus("Drag a box over " + REGION_LABELS[key] + "."); drawOverlay(); });
+        row.appendChild(c);
+      });
+      g.appendChild(row);
+      el.chips.appendChild(g);
+    }
+    chipGroup("Your cards & board", REGION_KEYS, "");
+    chipGroup("Numbers (optional)", NUM_KEYS, " num");
+    chipGroup("Seats — players in/out (optional)", SEAT_KEYS, " seat");
     modal.appendChild(el.chips);
 
     // Live results strip
@@ -680,7 +704,7 @@
 
   function refreshChips() {
     if (!el.chips) return;
-    [].forEach.call(el.chips.children, function (c) {
+    [].forEach.call(el.chips.querySelectorAll(".watch-chip"), function (c) {
       var key = c.dataset.key;
       c.classList.toggle("set", !!regions[key]);
       c.classList.toggle("active", selectedKey === key);
@@ -793,12 +817,20 @@
   function cardColor(id) { return Poker.SUIT_COLOR[Poker.suitOf(id)]; }
 
   // Teach panel for unknown cards.
-  var teaching = null;
+  var teaching = null, renderedTeachId = null;
   function renderTeach(unknowns) {
     if (!el.teach) return;
-    if (!unknowns.length && !teaching) { el.teach.hidden = true; el.teach.innerHTML = ""; return; }
+    if (!unknowns.length && !teaching) {
+      if (renderedTeachId !== null) { el.teach.hidden = true; el.teach.innerHTML = ""; renderedTeachId = null; }
+      return;
+    }
     if (!teaching && unknowns.length) teaching = unknowns[0];
-    if (!teaching) { el.teach.hidden = true; return; }
+    if (!teaching) { return; }
+    // Only rebuild the picker when the item actually changes - otherwise the
+    // buttons get recreated under your finger every frame and clicks miss.
+    var id = teaching.key + ":" + teaching.kind;
+    if (id === renderedTeachId) return;
+    renderedTeachId = id;
     el.teach.hidden = false;
     el.teach.innerHTML = "";
     var kind = teaching.kind; // 'rank' | 'suit' | 'digit'
@@ -841,7 +873,7 @@
       // Remember the skipped shape so it never re-prompts until you clear it.
       ignored.push({ kind: teaching.kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
       saveJSON(LS_IGNORE, ignored);
-      teaching = null; el.teach.hidden = true;
+      teaching = null; renderedTeachId = null; el.teach.hidden = true; el.teach.innerHTML = "";
     }));
     el.teach.appendChild(extra);
   }
@@ -850,7 +882,8 @@
     templates.push({ label: label, kind: kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
     saveJSON(LS_TEMPLATES, templates);
     stab[teaching.key] = null; // force re-evaluate
-    teaching = null;
+    teaching = null; renderedTeachId = null;
+    el.teach.hidden = true; el.teach.innerHTML = "";
     setStatus("Learned it — recognised automatically from now on.");
   }
 
