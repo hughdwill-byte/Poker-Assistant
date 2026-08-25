@@ -7,8 +7,11 @@
  * 1. You share a tab or window with the Screen Capture API (getDisplayMedia).
  *    This can be a DIFFERENT site than this app - the browser streams its
  *    pixels to us and, because you consented, we can read them off a canvas.
- * 2. You calibrate once: drag a box over each of your two hole cards and the
- *    five board positions. Boxes are saved (normalised) in localStorage.
+ * 2. You calibrate once: trace a box around each of your two hole cards and the
+ *    five board positions - one straight edge at a time, clicking the first
+ *    point again to close. Boxes are saved (normalised) in localStorage, and the
+ *    whole 52-card deck is recognised from a built-in database (js/carddb.js)
+ *    with no teaching needed.
  * 3. While watching, every frame each box is cropped and matched against a
  *    small library of card "signatures". Unknown cards are shown for you to
  *    label once ("teach"); after that they're recognised automatically.
@@ -575,7 +578,48 @@
     var x = Math.max(0, Math.round(rect.x * vw)), y = Math.max(0, Math.round(rect.y * vh));
     var w = Math.max(2, Math.round(rect.w * vw)), h = Math.max(2, Math.round(rect.h * vh));
     w = Math.min(w, vw - x); h = Math.min(h, vh - y);
-    return wctx.getImageData(x, y, w, h);
+    var img = wctx.getImageData(x, y, w, h);
+    if (rect.poly && rect.poly.length >= 3) maskOutsidePoly(img, rect.poly, rect, w, h);
+    return img;
+  }
+  // Point-in-polygon (ray cast) with the polygon given in the region's own
+  // normalised [0..1] coordinates.
+  function pointInPoly(px, py, poly) {
+    var inside = false;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      var xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+      if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  // Replace everything OUTSIDE the traced polygon with the median colour of the
+  // pixels inside it, so a neighbouring card's ink or the felt can't leak into
+  // the read - only what you traced is considered.
+  function maskOutsidePoly(img, poly, rect, w, h) {
+    var d = img.data;
+    // poly points are normalised to the whole frame; convert to this crop's px.
+    var pts = poly.map(function (p) { return { x: (p.x - rect.x) / rect.w, y: (p.y - rect.y) / rect.h }; });
+    // Fill colour = the card BODY colour (bright, low-saturation pixels inside
+    // the trace), so replacing the outside keeps the white background the ink
+    // mask expects - filling with a felt/card average would shift it and thin
+    // the glyphs. Fall back to the overall inside median if no body is found.
+    var body = [], all = [], x, y, i, r, g, bl, lum, sat;
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      if (!pointInPoly((x + 0.5) / w, (y + 0.5) / h, pts)) continue;
+      i = (y * w + x) * 4; r = d[i]; g = d[i + 1]; bl = d[i + 2];
+      lum = 0.299 * r + 0.587 * g + 0.114 * bl; sat = Math.max(r, g, bl) - Math.min(r, g, bl);
+      all.push(lum);
+      if (lum > 170 && sat < 40) body.push([r, g, bl]);
+    }
+    if (!all.length) return;
+    var fr, fg, fb;
+    if (body.length >= 8) {
+      body.sort(function (p, q) { return (p[0] + p[1] + p[2]) - (q[0] + q[1] + q[2]); });
+      var m = body[body.length >> 1]; fr = m[0]; fg = m[1]; fb = m[2];
+    } else { all.sort(function (p, q) { return p - q; }); fr = fg = fb = all[all.length >> 1]; }
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      if (!pointInPoly((x + 0.5) / w, (y + 0.5) / h, pts)) { i = (y * w + x) * 4; d[i] = fr; d[i + 1] = fg; d[i + 2] = fb; }
+    }
   }
 
   // ---------- Watch loop ----------
@@ -681,6 +725,8 @@
 
   // ---------- UI ----------
   var el = {}, calibrating = false, selectedKey = null, dragging = null;
+  var polyPts = null, polyHover = null; // in-progress trace: points + cursor (canvas px)
+  var CLOSE_PX = 12;                    // click this close to the first point to close
 
   function h(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
@@ -738,7 +784,7 @@
       keys.forEach(function (key) {
         var c = h("button", "watch-chip" + cls, REGION_LABELS[key]);
         c.dataset.key = key;
-        c.addEventListener("click", function () { selectedKey = key; calibrating = true; refreshChips(); setStatus("Drag a box over " + REGION_LABELS[key] + "."); drawOverlay(); });
+        c.addEventListener("click", function () { cancelPoly(); selectedKey = key; calibrating = true; refreshChips(); setStatus("Click each corner of " + REGION_LABELS[key] + "; click the first point again to finish."); drawOverlay(); });
         row.appendChild(c);
       });
       g.appendChild(row);
@@ -789,10 +835,12 @@
     modal.appendChild(settings);
 
     modal.appendChild(h("p", "watch-note",
-      "One-time setup per site: box your two cards, the five board spots, and (optional) the Pot " +
-      "and My-stack numbers. It reads the corner rank + suit, so you teach ~17 glyphs once, not " +
-      "every card. Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger - accuracy improves " +
-      "a lot. Any misread card is one tap to fix on the table."));
+      "One-time setup per site: pick a box below, then click around each of your two cards, the " +
+      "five board spots, and (optional) the Pot and My-stack numbers — one straight edge at a " +
+      "time, clicking the first point again to close. Trace just inside the card so the green felt " +
+      "and any neighbouring card are left out. The whole 52-card deck is recognised from the " +
+      "built-in database — usually no teaching at all. Tip: zoom the poker window (Ctrl/Cmd +) so " +
+      "cards are bigger — accuracy improves. Any misread card is one tap to fix on the table."));
     modal.appendChild(h("p", "watch-note",
       "Players coming & going (up to 5 seats, including you): box a spot on each seat (Seat 1-5) " +
       "that shows the empty table when nobody's there and the player's avatar when taken. With " +
@@ -876,7 +924,7 @@
     el.stop.disabled = !stream;
     el.watch.disabled = !stream;
   }
-  function toggleCalibrate() { calibrating = !calibrating; if (!calibrating) selectedKey = null; updateButtons(); drawOverlay(); setStatus(calibrating ? "Click a card box below, then drag over it." : "Calibration off."); }
+  function toggleCalibrate() { calibrating = !calibrating; if (!calibrating) { selectedKey = null; cancelPoly(); } updateButtons(); drawOverlay(); setStatus(calibrating ? "Pick a box below, then click its corners to trace it." : "Calibration off."); }
   function toggleWatch() { if (watching) pauseWatching(); else startWatching(); }
 
   function refreshChips() {
@@ -928,55 +976,105 @@
     ctx.clearRect(0, 0, r.width, r.height);
     ALL_KEYS.forEach(function (key) {
       var rect = regions[key]; if (!rect) return;
-      ctx.strokeStyle = key === selectedKey ? "#f5b93b"
+      var col = key === selectedKey ? "#f5b93b"
         : SEAT_KEYS.indexOf(key) >= 0 ? "#a78bfa"
         : NUM_KEYS.indexOf(key) >= 0 ? "#f5b93b"
         : key.indexOf("hero") === 0 ? "#4ade80" : "#60a5fa";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(rect.x * r.width, rect.y * r.height, rect.w * r.width, rect.h * r.height);
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      var lx, ly;
+      if (rect.poly && rect.poly.length >= 3) {           // traced outline
+        ctx.beginPath();
+        rect.poly.forEach(function (pt, i) { var X = pt.x * r.width, Y = pt.y * r.height; if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+        ctx.closePath(); ctx.stroke();
+        lx = rect.x * r.width; ly = rect.y * r.height;
+      } else {                                             // legacy rectangle
+        ctx.strokeRect(rect.x * r.width, rect.y * r.height, rect.w * r.width, rect.h * r.height);
+        lx = rect.x * r.width; ly = rect.y * r.height;
+      }
       ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.font = "11px system-ui";
       var label = REGION_LABELS[key];
-      ctx.fillRect(rect.x * r.width, rect.y * r.height - 14, ctx.measureText(label).width + 8, 14);
-      ctx.fillStyle = "#fff"; ctx.fillText(label, rect.x * r.width + 4, rect.y * r.height - 3);
+      ctx.fillRect(lx, ly - 14, ctx.measureText(label).width + 8, 14);
+      ctx.fillStyle = "#fff"; ctx.fillText(label, lx + 4, ly - 3);
     });
-    if (dragging) {
-      ctx.strokeStyle = "#f5b93b"; ctx.setLineDash([5, 3]); ctx.lineWidth = 2;
-      ctx.strokeRect(dragging.x, dragging.y, dragging.w, dragging.h); ctx.setLineDash([]);
+    // In-progress traced outline: straight segments between clicked points, a
+    // rubber-band to the cursor, and the closing edge snapping back to the start.
+    if (polyPts && polyPts.length) {
+      ctx.strokeStyle = "#f5b93b"; ctx.lineWidth = 2;
+      ctx.beginPath();
+      polyPts.forEach(function (pt, i) { if (i) ctx.lineTo(pt.x, pt.y); else ctx.moveTo(pt.x, pt.y); });
+      var nearStart = polyHover && polyPts.length >= 3 && dist2(polyHover, polyPts[0]) <= CLOSE_PX * CLOSE_PX;
+      var end = nearStart ? polyPts[0] : polyHover;
+      if (end) ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      // vertices
+      polyPts.forEach(function (pt, i) {
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, i === 0 ? 5 : 3, 0, 6.2832);
+        ctx.fillStyle = i === 0 ? (nearStart ? "#4ade80" : "#f5b93b") : "#f5b93b"; ctx.fill();
+      });
+      if (nearStart) { ctx.strokeStyle = "#4ade80"; ctx.beginPath(); ctx.arc(polyPts[0].x, polyPts[0].y, 8, 0, 6.2832); ctx.stroke(); }
     }
   }
+  function dist2(a, b) { var dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy; }
+  // Calibration: trace a box one straight edge at a time. Click to drop each
+  // corner; the closing edge snaps back to the first point when you click near
+  // it (or press Enter / double-click). Backspace undoes a point, Esc cancels.
   function bindCalibrationMouse() {
-    var c = el.canvas, start = null;
+    var c = el.canvas;
     function pos(e) { var r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top, W: r.width, H: r.height }; }
-    c.addEventListener("mousedown", function (e) {
-      if (!calibrating || !selectedKey) { setStatus("Pick a card box below first (Calibrate)."); return; }
-      var p = pos(e); start = p; dragging = { x: p.x, y: p.y, w: 0, h: 0 }; e.preventDefault();
-    });
     c.addEventListener("mousemove", function (e) {
-      var p = pos(e);
-      if (calibrating && selectedKey) drawLoupe(p);      // magnify under the cursor
-      if (!start) return;
-      dragging = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
-      drawOverlay();
+      if (!calibrating || !selectedKey) return;
+      var p = pos(e); polyHover = { x: p.x, y: p.y };
+      drawLoupe(p); drawOverlay();
     });
     c.addEventListener("mouseleave", function () { if (el.loupe) el.loupe.hidden = true; });
-    window.addEventListener("mouseup", function (e) {
-      if (el.loupe) el.loupe.hidden = true;
-      if (!start) return; var p = pos(e);
-      var W = start.W, H = start.H;
-      var x = Math.min(start.x, p.x) / W, y = Math.min(start.y, p.y) / H;
-      var w = Math.abs(p.x - start.x) / W, hh = Math.abs(p.y - start.y) / H;
-      start = null; dragging = null;
-      if (w > 0.01 && hh > 0.01) {
-        regions[selectedKey] = { x: x, y: y, w: w, h: hh };
-        saveJSON(LS_REGIONS, regions);
-        setStatus(REGION_LABELS[selectedKey] + " box set.");
-        // advance to next unset region for convenience
-        var next = ALL_KEYS.filter(function (k) { return !regions[k]; })[0];
-        selectedKey = next || null;
-        if (next) setStatus("Now drag over " + REGION_LABELS[next] + ".");
-      }
-      refreshChips(); drawOverlay();
+    c.addEventListener("click", function (e) {
+      if (!calibrating || !selectedKey) { setStatus("Pick a box below first (Calibrate), then click its corners."); return; }
+      var p = pos(e), pt = { x: p.x, y: p.y, W: p.W, H: p.H };
+      if (polyPts && polyPts.length >= 3 && dist2(pt, polyPts[0]) <= CLOSE_PX * CLOSE_PX) { finishPoly(); return; }
+      if (!polyPts) polyPts = [];
+      polyPts.push(pt);
+      setStatus(polyPts.length < 3
+        ? "Point " + polyPts.length + " placed — keep clicking the corners of " + REGION_LABELS[selectedKey] + "."
+        : "Click the next corner, or click the first point (green) to finish.");
+      drawOverlay();
     });
+    c.addEventListener("dblclick", function (e) { if (polyPts && polyPts.length >= 3) { e.preventDefault(); finishPoly(); } });
+    document.addEventListener("keydown", function (e) {
+      if (!calibrating || !polyPts) return;
+      if (e.key === "Enter" && polyPts.length >= 3) { e.preventDefault(); finishPoly(); }
+      else if (e.key === "Escape") { cancelPoly(); setStatus("Trace cancelled."); }
+      else if (e.key === "Backspace") { e.preventDefault(); polyPts.pop(); if (!polyPts.length) polyPts = null; drawOverlay(); }
+    });
+  }
+  function cancelPoly() { polyPts = null; polyHover = null; if (el.loupe) el.loupe.hidden = true; drawOverlay(); }
+  function finishPoly() {
+    if (!polyPts || polyPts.length < 3 || !selectedKey) { cancelPoly(); return; }
+    var W = polyPts[0].W, H = polyPts[0].H;
+    var poly = polyPts.map(function (p) { return { x: p.x / W, y: p.y / H }; });
+    var xs = poly.map(function (p) { return p.x; }), ys = poly.map(function (p) { return p.y; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    var key = selectedKey;
+    cancelPoly();
+    if (x1 - x0 < 0.01 || y1 - y0 < 0.01) { setStatus("That box was too small — try again."); return; }
+    regions[key] = { x: x0, y: y0, w: x1 - x0, h: y1 - y0, poly: poly };
+    saveJSON(LS_REGIONS, regions);
+    // Show the best-fit read for this box straight away (card regions).
+    var guess = bestFitFor(key);
+    setStatus(REGION_LABELS[key] + " traced." + (guess ? "  Best fit: " + guess : ""));
+    var next = ALL_KEYS.filter(function (k) { return !regions[k]; })[0];
+    selectedKey = next || key;
+    refreshChips(); drawOverlay();
+  }
+  // Grab the current frame and report the best database fit for a just-traced
+  // box, so calibration confirms what it will read.
+  function bestFitFor(key) {
+    if (REGION_KEYS.indexOf(key) < 0 || !stream) return null;
+    if (!grabFrame()) return null;
+    var res = recognizeCard(regionImageData(regions[key]));
+    if (res.status === "card") return Poker.cardLabel(res.id);
+    if (res.status === "empty") return "empty";
+    return res.teach ? "needs the " + (res.teach === "rank" ? "number" : res.teach) : "unrecognised (teach it)";
   }
 
   // Live strip of current recognised cards.
@@ -1109,7 +1207,7 @@
       teaching = null; renderedTeachId = null; el.teach.hidden = true; el.teach.innerHTML = "";
       stab[key] = null;
       selectedKey = key; calibrating = true; refreshChips();
-      setStatus("Re-drawing " + REGION_LABELS[key] + " — drag a new box (zoom the poker window for a bigger target).");
+      setStatus("Re-tracing " + REGION_LABELS[key] + " — click its corners (zoom the poker window for a bigger target).");
       drawOverlay();
     }));
     extra.appendChild(mkbtn("Skip (ignore this)", function () {
@@ -1227,6 +1325,7 @@
     },
     _teach: function (label, sig, kind) { templates.push({ label: label, kind: kind || "card", red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
     _extractGlyphs: extractGlyphs, _segmentCard: segmentCard, _nearest: nearestKind,
+    _pointInPoly: pointInPoly, _maskOutsidePoly: maskOutsidePoly, _normalizeCard: normalizeCard,
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _dbCount: function () { return dbTemplates.length; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,

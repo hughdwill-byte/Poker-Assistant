@@ -124,13 +124,20 @@ different site/tab than the app itself and update the odds live.
 **How to use it** (desktop Chrome / Edge / Firefox):
 1. Click **👁 Watch**, then **Share a tab / window** and pick your poker window.
 2. **Calibrate once:** click a box below the preview (e.g. *Your card 1*), then
-   drag a rectangle over it. A **magnifier loupe** follows your cursor so you
-   can place the edges precisely even on small cards. Do this for your two
-   cards, the five board spots, and optionally the **Pot** and **My-stack**
-   numbers. Boxes are saved.
-3. Click **Start watching.** When it meets a card *or digit* it doesn't know it
-   shows the exact crop (magnified) and asks you to label it **once**; after
-   that it's automatic. If the recogniser has mislabelled what it found (say it
+   **trace it one straight edge at a time** — click each corner, and click the
+   first point again (it turns green) to close. This lets you draw a tight,
+   angled outline that follows a card even when it's partly behind another and
+   leaves out the felt and any neighbouring card. A **magnifier loupe** follows
+   your cursor for precise corners; Backspace undoes a point and Esc cancels. Do
+   this for your two cards, the five board spots, and optionally the **Pot** and
+   **My-stack** numbers. Boxes are saved, and the best-fit card is shown the
+   moment you finish a trace.
+3. Click **Start watching.** The **whole 52-card deck is recognised out of the
+   box** from a built-in database of the site's card art — it matches on the
+   number, suit and colour and ignores the green table, so it doesn't need to
+   see the whole card. You normally teach *nothing*. If it ever meets a mark it
+   doesn't know it shows the exact crop (magnified) and asks you to label it
+   **once**. If the recogniser has mislabelled what it found (say it
    asks for a *suit* but you're looking at a *rank*), use the **Rank / Suit**
    switch; if the crop is cut off or grabbing the wrong thing, hit
    **↻ Re-box** to redraw that one box.
@@ -152,16 +159,19 @@ empty press **Capture empty seats** to record how "empty" looks. From then on
 any seat that no longer matches its empty snapshot counts as a player, and the
 table's player count follows how many seats are taken.
 
-The recogniser reads a card as its **rank first, then the suit below it** — once
-it knows the rank it won't ask about it again; the next prompt is the suit,
-shown from the area *underneath* the rank. If your box is cut off above the
-suit, it tells you so and asks you to **Re-box** rather than guessing.
+**Matching against the card database.** A bundled database (`js/carddb.js`)
+holds the number and suit shapes of all 52 cards taken from the site's own card
+art. On every box the app trims to just the **red and black marks** (ignoring
+the green felt and any snipped edges), splits the number from the suit, and
+picks the closest-fitting card in the database by shape **and** colour — so it
+recognises a card from its index alone without seeing the whole thing. A card it
+still can't place (or gets wrong) is one tap on the live strip to set and teach.
 
 Numbers are read with a decimal point, so **1.2M** is read as 1,200,000 (not
 12,000,000), and **K** / **M** suffixes and thousands separators are handled.
 
-**Honest limits.** This is a heuristic template matcher, not a trained model:
-accuracy depends on your calibration and what you teach it, and it can misread —
+**Honest limits.** Recognition is template matching against the card database,
+not a trained model: it's accurate on a clean, well-traced box but can misread —
 glance at the live strip and one-click any card to fix and teach it. It reads
 **your cards, the board, the pot and your stack** (the numbers that drive the
 maths). Reading every opponent's stack and auto-detecting the dealer button by
