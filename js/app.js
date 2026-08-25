@@ -11,6 +11,7 @@
   var state = {
     numPlayers: 6,
     decks: 1,
+    reshuffleEveryHand: true,               // fresh full deck each hand (Next hand = Shuffle)
     handsBeforeShuffle: 1,
     handsPlayed: 0,
     trials: 40000,
@@ -597,6 +598,25 @@
       : "Hand " + (state.handsPlayed + 1) + " of " + h + " before the next shuffle. " +
         state.dead.length + " card(s) already dealt this shoe are removed from the odds.";
   }
+  // Sync the "reshuffle every hand" checkbox with the shoe-length slider. When
+  // on, the shoe is one hand long (Next hand = a full fresh deck) and the slider
+  // is disabled; when off, the slider drives a multi-hand shoe (min 2 hands).
+  function applyReshuffleMode(userToggled) {
+    var slider = $("in-shuffle"), field = $("shuffle-field");
+    if (state.reshuffleEveryHand) {
+      state.handsBeforeShuffle = 1;
+      slider.value = 1; $("shuffle-val").textContent = 1;
+      slider.disabled = true; if (field) field.classList.add("is-disabled");
+      if (userToggled) shuffle();            // return to one full, shuffled deck now
+      else updateShoeHint();
+    } else {
+      slider.disabled = false; if (field) field.classList.remove("is-disabled");
+      if (parseInt(slider.value, 10) < 2) slider.value = 2; // "off" means >1 hand
+      state.handsBeforeShuffle = parseInt(slider.value, 10);
+      $("shuffle-val").textContent = state.handsBeforeShuffle;
+      updateShoeHint();
+    }
+  }
 
   // ---------- Inputs ----------
   function syncStackInput() { $("in-stack").value = state.players[state.heroIndex].stack; }
@@ -625,6 +645,10 @@
       state.decks = parseInt(this.value, 10);
       $("decks-val").textContent = state.decks;
       scheduleAndRender();
+    });
+    $("in-reshuffle").addEventListener("change", function () {
+      state.reshuffleEveryHand = this.checked;
+      applyReshuffleMode(true);
     });
     $("in-shuffle").addEventListener("input", function () {
       state.handsBeforeShuffle = parseInt(this.value, 10);
@@ -767,7 +791,8 @@
     ensurePlayers();
     bindInputs();
     syncStackInput();
-    updateShoeHint();
+    $("in-reshuffle").checked = state.reshuffleEveryHand;
+    applyReshuffleMode(false);
     render();
     scheduleCompute();
   }

@@ -200,6 +200,16 @@ body {
   color: var(--text); border-radius: 8px; padding: 9px 10px; font-size: 14px;
 }
 .field input[type="range"] { width: 100%; accent-color: var(--accent); }
+/* Checkbox row (e.g. "Reshuffle the deck every hand") */
+.field label.check-row {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  font-size: 14px; color: var(--text); margin-bottom: 0;
+}
+.field label.check-row input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto;
+}
+.field.is-disabled { opacity: .45; }
+.field.is-disabled input[type="range"] { cursor: not-allowed; }
 .hint { color: var(--muted); font-size: 11.5px; margin: 6px 0 0; }
 .legend p { font-size: 12.5px; color: #c3ccd8; margin: 0; }
 .legend a { color: var(--accent); }

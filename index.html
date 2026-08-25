@@ -103,6 +103,13 @@
           <input id="in-decks" type="range" min="1" max="8" step="1" value="1" />
         </div>
         <div class="field">
+          <label class="check-row" for="in-reshuffle">
+            <input id="in-reshuffle" type="checkbox" checked />
+            <span>Reshuffle the deck every hand</span>
+          </label>
+          <p class="hint">On: every <b>Next hand</b> returns all cards to a full, freshly shuffled deck. Turn off to track a shoe across several hands.</p>
+        </div>
+        <div class="field" id="shuffle-field">
           <label for="in-shuffle">Hands played before shuffling: <b id="shuffle-val">1</b></label>
           <input id="in-shuffle" type="range" min="1" max="20" step="1" value="1" />
           <p class="hint" id="shoe-hint"></p>

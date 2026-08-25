@@ -36,9 +36,11 @@ can host it for free on **GitHub Pages** and use it live at the table.
   odds**, **expected value (EV)** and the **Kelly criterion** (the bet fraction
   that maximises long-run winnings). All the numbers are shown so you can check
   the maths.
-- **Fully customisable game.** Number of players (2–10), number of decks (1–8),
-  and how many hands are dealt before the deck is shuffled — dealt cards stay
-  removed from the odds across a shoe.
+- **Fully customisable game.** Number of players (2–10) and number of decks
+  (1–8). By default the deck is **reshuffled every hand** (a full, fresh deck
+  each deal); turn that option off to track a multi-hand **shoe**, choosing how
+  many hands are dealt before the shuffle — dealt cards then stay removed from
+  the odds across the shoe.
 - **Built for speed.** The simulation runs in a Web Worker so the interface
   never freezes; a full recalculation typically takes **under 100 ms**.
 - **First-class iPhone experience.** A dedicated mobile layout built to Apple
