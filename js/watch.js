@@ -55,10 +55,28 @@
   function loadJSON(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
-  var regions = loadJSON(LS_REGIONS, {});     // key -> {x,y,w,h} normalised
-  var templates = loadJSON(LS_TEMPLATES, []); // [{kind, label, red, vec:[...]}]
+  var regions = loadJSON(LS_REGIONS, {});     // key -> {x,y,w,h} or {poly,x,y,w,h} normalised
+  var templates = loadJSON(LS_TEMPLATES, []); // user-taught: [{kind, label, red, vec:[...]}]
   var ignored = loadJSON(LS_IGNORE, []);      // skipped glyph signatures (won't re-prompt)
   var seatBase = loadJSON(LS_SEATBASE, {});   // seat key -> { vec } empty-seat fingerprint
+
+  // Built-in card database (js/carddb.js): rank + suit glyph exemplars taken
+  // from the real site's card art, so the whole deck is recognised out of the
+  // box - no teaching needed. Bit-packed vectors are unpacked once here. User
+  // teaches (above) are searched alongside these and always win ties, so you can
+  // still correct any card and it sticks.
+  var dbTemplates = (function () {
+    var db = window.PokerCardDB;
+    if (!db || !db.templates || !db.templates.length) return [];
+    function unpack(b64, n) {
+      var bin = atob(b64), vec = new Float32Array(n);
+      for (var i = 0; i < n; i++) vec[i] = (bin.charCodeAt(i >> 3) >> (i & 7)) & 1;
+      return vec;
+    }
+    return db.templates.map(function (t) {
+      return { label: t.label, kind: t.kind, red: t.red, vec: unpack(t.bits, t.n), db: true };
+    });
+  })();
   var occThr = 0.55;                          // how different from empty = "occupied"
 
   // ---------- Card label <-> id ----------
@@ -149,8 +167,15 @@
   }
 
   var threshold = 0.62;  // whole-region present match (legacy)
-  var gthr = 0.42;       // rank/digit match distance (must absorb red-vs-black edge noise)
-  var sthr = 0.32;       // suit match distance (single-colour, so fairly tight)
+  var gthr = 0.42;       // digit match distance (must absorb red-vs-black edge noise)
+  var sthr = 0.32;       // (legacy) suit distance for the taught-only path
+  // Card rank/suit accept distances. The built-in DB has one exemplar per card,
+  // so the true card is reliably the NEAREST; these bounds are looser (they only
+  // reject non-glyphs) because live crops of the same art differ a bit from the
+  // reference through anti-aliasing, scaling and how the box was drawn. The ink
+  // guard + "is a card present" check stop empty/felt regions matching anything.
+  var rankThr = 0.50;
+  var suitThr = 0.40;
 
   function classify(sig) {
     // A face-up card is mostly a white body regardless of felt colour; if there
@@ -187,16 +212,21 @@
     vals.sort(function (a, b) { return a - b; });
     return vals[vals.length >> 1];
   }
-  // Binary ink mask. A pixel is "ink" if it differs from the background in
-  // luminance OR is strongly coloured (saturated). The saturation test makes a
-  // RED glyph produce the same shape as a BLACK one, so ranks match across
-  // suit colours (a red A and a black A give identical masks).
+  // Binary ink mask of ONLY the card's red + black marks. A pixel is "ink" if it
+  // is red (red channel dominant) or stands out from the background in luminance
+  // (black glyph on white, or a light digit on a dark panel) - but GREEN felt is
+  // explicitly excluded, so the table background is ignored even when a crop
+  // includes it or has snipped card edges. A red glyph and a black glyph produce
+  // the same shape mask, so ranks match across suit colours.
   function inkMask(img, bg) {
     var w = img.width, h = img.height, d = img.data, m = new Uint8Array(w * h);
     for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
       var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
-      var lum = 0.299 * r + 0.587 * g + 0.114 * b, sat = Math.max(r, g, b) - Math.min(r, g, b);
-      if (Math.abs(lum - bg) > 55 || sat > 60) m[y * w + x] = 1;
+      var lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      var isRed = (r - g > 40 && r - b > 40 && r > 80);
+      var isGreen = (g - r > 22 && g - b > 12);            // table felt
+      var isContrast = Math.abs(lum - bg) > 55;             // dark glyph / light digit
+      m[y * w + x] = ((isRed || isContrast) && !isGreen) ? 1 : 0;
     }
     return m;
   }
@@ -234,14 +264,8 @@
     return { y0: y0, y1: y1 };
   }
   function classifyGlyph(sig) {
-    var best = null, bs = 1e9;
-    for (var i = 0; i < templates.length; i++) {
-      var t = templates[i];
-      if (t.kind !== "digit") continue;
-      var s = rms(t.vec, sig.vec);
-      if (s < bs) { bs = s; best = t; }
-    }
-    return (best && bs < gthr) ? best.label : null;
+    var m = nearestKind(sig, "digit", false);
+    return (m && m.dist < gthr) ? m.label : null;
   }
   // Parse a token string of digits, '.' separators and an optional K/M suffix.
   // Rule: a single separator before a K/M suffix is a decimal point (1.4M);
@@ -339,15 +363,24 @@
     if (x1 < 0) { x0 = 0; x1 = w - 1; }
     return { x0: x0, x1: x1 };
   }
-  function matchKind(sig, kind, useColor) {
+  // Nearest-neighbour over BOTH the built-in card DB and any user-taught glyphs.
+  // Returns {label, dist} of the closest exemplar of this kind (or null).
+  function nearestKind(sig, kind, useColor) {
     var best = null, bs = 1e9;
-    for (var i = 0; i < templates.length; i++) {
-      var t = templates[i];
-      if (t.kind !== kind) continue;
-      var s = rms(t.vec, sig.vec) + (useColor ? 1.0 * Math.abs((t.red || 0) - sig.red) : 0);
-      if (s < bs) { bs = s; best = t; }
+    function scan(list) {
+      for (var i = 0; i < list.length; i++) {
+        var t = list[i];
+        if (t.kind !== kind) continue;
+        var s = rms(t.vec, sig.vec) + (useColor ? 1.0 * Math.abs((t.red || 0) - sig.red) : 0);
+        if (s < bs) { bs = s; best = t; }
+      }
     }
-    return (best && bs < (kind === "suit" ? sthr : gthr)) ? best.label : null;
+    scan(dbTemplates); scan(templates);   // user teaches scanned last -> win ties
+    return best ? { label: best.label, dist: bs } : null;
+  }
+  function matchKind(sig, kind, useColor) {
+    var m = nearestKind(sig, kind, useColor);
+    return (m && m.dist < (kind === "suit" ? sthr : gthr)) ? m.label : null;
   }
   // Any ink found strictly below a y line (used to locate a small/faint suit pip
   // that didn't clear the row-band threshold). Ignores stray single pixels.
@@ -361,77 +394,137 @@
     if (y1 < 0 || total < 3) return null;
     return { y0: y0, y1: y1 };
   }
-  // Split a card image into its rank glyph (top) and suit glyph (below it). The
-  // suit is ALWAYS taken from below the rank: first as its own ink band, and if
-  // it's too small/faint to form a band, by scanning the raw ink underneath. If
-  // there is genuinely nothing below the rank, the box is cut off (`cut`) - we
-  // never fall back to handing the rank crop back as if it were the suit.
+  // Bounding box of all red/black ink in an image (green felt excluded), or null.
+  function inkBBox(img) {
+    var mask = inkMask(img, estimateBg(img)), w = img.width, h = img.height;
+    var x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) if (mask[y * w + x]) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    return x1 < 0 ? null : { x0: x0, y0: y0, x1: x1, y1: y1 };
+  }
+  // Trim a card region down to just its printed marks (rank + suits), so felt
+  // padding, blank card margins and snipped edges don't shift where the index
+  // sits. This makes recognition independent of how tightly the box was drawn.
+  function normalizeCard(img) {
+    var bb = inkBBox(img);
+    if (!bb) return img;
+    var mx = Math.round((bb.x1 - bb.x0) * 0.06) + 1, my = Math.round((bb.y1 - bb.y0) * 0.06) + 1;
+    return cropRect(img,
+      Math.max(0, bb.x0 - mx), Math.max(0, bb.y0 - my),
+      Math.min(img.width - 1, bb.x1 + mx), Math.min(img.height - 1, bb.y1 + my));
+  }
+  // Split a card index image into its rank glyph (top) and suit glyph (below).
+  // A poker index is always rank-over-suit, so instead of fragile ink "bands"
+  // (which merge or shatter at small scale) we find the natural EMPTY ROW
+  // between the two - the row of minimum ink in the lower-middle of the ink
+  // block. If no such near-empty gap exists, the crop holds only the rank (suit
+  // cut off / not present) and we mark `cut` rather than inventing a suit.
   function segmentCard(img) {
     var cw = img.width, ch = img.height;
     var mask = inkMask(img, estimateBg(img));
-    var bands = mergeBands(rowBands(mask, cw, ch));
-    if (!bands.length) return null;
-    var rankBand = bands[0];
-    var rcb = colBounds(mask, cw, rankBand.y0, rankBand.y1);
+    var rows = new Array(ch), maxRow = 0, ytop = ch, ybot = -1, y, x;
+    for (y = 0; y < ch; y++) {
+      var c = 0; for (x = 0; x < cw; x++) c += mask[y * cw + x];
+      rows[y] = c; if (c > maxRow) maxRow = c;
+      if (c > 0) { if (y < ytop) ytop = y; if (y > ybot) ybot = y; }
+    }
+    if (ybot < 0 || maxRow === 0) return null;
+    var h = ybot - ytop + 1, gapThr = maxRow * 0.22;
+    var rankY0 = ytop, rankY1 = ybot, suitReg = null;
+    if (h >= 8) {
+      // Look for the emptiest row in the lower-middle - the rank/suit divider.
+      var lo = ytop + Math.max(1, Math.floor(h * 0.30));
+      var hi = ybot - Math.max(1, Math.floor(h * 0.12));
+      var splitY = -1, minInk = 1e9;
+      for (y = lo; y <= hi; y++) if (rows[y] < minInk) { minInk = rows[y]; splitY = y; }
+      if (splitY >= 0 && minInk <= gapThr) {
+        var rEnd = splitY; while (rEnd > rankY0 && rows[rEnd] <= gapThr) rEnd--;
+        var sStart = splitY; while (sStart < ybot && rows[sStart] <= gapThr) sStart++;
+        if (rEnd > rankY0 && sStart > rEnd && sStart <= ybot) { rankY1 = rEnd; suitReg = { y0: sStart, y1: ybot }; }
+      }
+    }
+    var rcb = colBounds(mask, cw, rankY0, rankY1);
     var out = {
-      rankImg: cropRect(img, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1),
-      rankSig: { vec: glyphVec(mask, cw, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1), red: 0 },
+      rankImg: cropRect(img, rcb.x0, rankY0, rcb.x1, rankY1),
+      rankSig: { vec: glyphVec(mask, cw, rcb.x0, rankY0, rcb.x1, rankY1), red: 0 },
     };
-    var suitReg = bands.length >= 2
-      ? { y0: bands[1].y0, y1: bands[bands.length - 1].y1 }   // distinct suit band(s)
-      : rawInkBelow(mask, cw, ch, rankBand.y1);                // faint suit under the rank
     if (suitReg) {
       var scb = colBounds(mask, cw, suitReg.y0, suitReg.y1);
       out.suitImg = cropRect(img, scb.x0, suitReg.y0, scb.x1, suitReg.y1);
       out.suitSig = { vec: glyphVec(mask, cw, scb.x0, suitReg.y0, scb.x1, suitReg.y1), red: boxColor(img, scb.x0, suitReg.y0, scb.x1, suitReg.y1).red };
     } else {
-      out.cut = true; // nothing below the rank -> suit isn't in the crop
-      var sy0 = Math.min(ch - 1, rankBand.y1 + 1);
-      out.suitImg = cropRect(img, 0, sy0, cw - 1, ch - 1); // the (blank) area we looked in
+      out.cut = true; // no gap found -> suit isn't in the crop
+      var sy0 = Math.min(ch - 1, rankY1 + 1);
+      out.suitImg = cropRect(img, 0, sy0, cw - 1, ch - 1);
     }
     return out;
   }
   var EMPTY_SIG = { vec: new Float32Array(GW * GH), red: 0 };
-  // Read the rank (top) then the suit (below it). Once the rank is recognised it
-  // stays recognised, so the next prompt is the SUIT - shown from the region
-  // under the rank, never the rank glyph again.
-  function readRankSuit(img) {
-    var seg = segmentCard(img);
-    if (!seg) return { status: "unknown" };
-    var rank = matchKind(seg.rankSig, "rank", false);
-    if (!rank) {
-      if (isIgnored(seg.rankSig, "rank")) return { status: "unknown" };
-      return { status: "unknown", teach: "rank", img: seg.rankImg, sig: seg.rankSig };
-    }
-    if (seg.cut || !seg.suitSig) {
-      // Rank is known; the suit just isn't inside the box -> ask for the suit
-      // but flag that the box looks cut off so the user can re-box it.
-      return { status: "unknown", teach: "suit", cut: true, img: seg.suitImg, sig: seg.suitSig || EMPTY_SIG };
-    }
-    var suit = matchKind(seg.suitSig, "suit", true);
-    if (!suit) {
-      if (isIgnored(seg.suitSig, "suit")) return { status: "unknown" };
-      return { status: "unknown", teach: "suit", img: seg.suitImg, sig: seg.suitSig };
-    }
-    return { status: "card", id: Poker.makeId(RANK_VAL[rank], SUIT_CODE[suit]), label: rank + suit };
+  // A glyph descriptor is only usable if a sensible fraction of it is ink. A
+  // near-blank crop (a sliver of a card, felt, a gap) has almost no ink and, left
+  // unguarded, rms-matches sparse exemplars at ~0 distance - a false positive.
+  function validInk(sig) {
+    if (!sig || !sig.vec) return false;
+    var s = 0, v = sig.vec; for (var i = 0; i < v.length; i++) s += v[i];
+    var f = s / v.length;
+    return f >= 0.05 && f <= 0.9;
   }
+  // Score one candidate crop into {seg, r, s} where r/s are nearest rank/suit
+  // matches (only when the glyph passes the ink guard).
+  function scoreCrop(img) {
+    var seg = segmentCard(img);
+    if (!seg) return null;
+    var r = validInk(seg.rankSig) ? nearestKind(seg.rankSig, "rank", false) : null;
+    var s = (seg.suitSig && validInk(seg.suitSig)) ? nearestKind(seg.suitSig, "suit", true) : null;
+    return { seg: seg, r: r, s: s };
+  }
+  // Recognise a card region against the built-in DB (+ user teaches). Tries both
+  // the top-left corner (a FULL card - isolates the index from the central pips)
+  // and the whole box (a tight index box, e.g. a card slid behind another), and
+  // keeps whichever gives the best rank+suit match. Focuses on the red/black
+  // index ink; the green felt and blank areas fall out via the bg/ink masking.
   // Returns {status:'empty'|'card'|'unknown', id?, label?, teach?, img?, sig?}
   function recognizeCard(regionImg) {
     var whole = signature(regionImg);
     if (!(whole.white > 0.1 || whole.red > 0.05)) return { status: "empty" };
-    // Attempt 1: the corner of a full card (isolates the index from the big
-    // central pip). Attempt 2: treat the whole box as the index itself, which
-    // is how you'd box a card that's slid behind another.
-    var r1 = readRankSuit(subImage(regionImg, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
-    if (r1.status === "card") return r1;
-    var r2 = readRankSuit(regionImg);
-    if (r2.status === "card") return r2;
-    // Prefer a suit prompt that actually has a suit crop over a cut-off one.
-    if (r1.teach === "suit" && !r1.cut) return r1;
-    if (r2.teach === "suit" && !r2.cut) return r2;
-    if (r1.teach === "suit") return r1;
-    if (r2.teach === "suit") return r2;
-    return r1.teach ? r1 : (r2.teach ? r2 : { status: "unknown" });
+    // Trim to the actual marks so felt/margins/snipped edges don't move the
+    // index, then read the left-column index (rank over the small suit) from the
+    // corner, and also try the whole trimmed card.
+    var card = normalizeCard(regionImg);
+    var cands = [
+      scoreCrop(subImage(card, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1)),
+      scoreCrop(card),
+    ];
+    // Best complete read: both rank and suit under threshold, lowest total dist.
+    var best = null;
+    cands.forEach(function (c) {
+      if (!c || !c.r || !c.s) return;
+      if (c.r.dist < rankThr && c.s.dist < suitThr) {
+        var tot = c.r.dist + c.s.dist;
+        if (!best || tot < best.tot) best = { tot: tot, r: c.r, s: c.s };
+      }
+    });
+    if (best) return { status: "card", id: Poker.makeId(RANK_VAL[best.r.label], SUIT_CODE[best.s.label]), label: best.r.label + best.s.label };
+    // No complete read - produce a teach prompt from the most-progressed crop
+    // (prefer one whose rank already matched, so the next question is the suit).
+    var tc = null;
+    cands.forEach(function (c) {
+      if (!c || !c.seg) return;
+      if (!tc) { tc = c; return; }
+      var cR = c.r && c.r.dist < rankThr, tR = tc.r && tc.r.dist < rankThr;
+      if (cR && !tR) tc = c;
+    });
+    if (!tc) return { status: "unknown" };
+    var seg = tc.seg;
+    if (!(tc.r && tc.r.dist < rankThr)) {              // rank not known yet
+      if (!validInk(seg.rankSig) || isIgnored(seg.rankSig, "rank")) return { status: "unknown" };
+      return { status: "unknown", teach: "rank", img: seg.rankImg, sig: seg.rankSig };
+    }
+    if (seg.cut || !seg.suitSig || !validInk(seg.suitSig))   // rank known, suit missing/cut
+      return { status: "unknown", teach: "suit", cut: !!seg.cut, img: seg.suitImg, sig: seg.suitSig || EMPTY_SIG };
+    if (isIgnored(seg.suitSig, "suit")) return { status: "unknown" };
+    return { status: "unknown", teach: "suit", img: seg.suitImg, sig: seg.suitSig };
   }
 
   function isIgnored(sig, kind) {
@@ -746,10 +839,11 @@
     return s;
   }
   function sensSlider() {
-    // Controls the glyph match distance (gthr). Lower = stricter (fewer wrong
-    // reads, more "teach" prompts); higher = looser.
-    var s = document.createElement("input"); s.type = "range"; s.min = 8; s.max = 30; s.value = Math.round(gthr * 100);
-    s.addEventListener("input", function () { gthr = +s.value / 100; });
+    // Controls how close a card glyph must be to a database/taught exemplar to be
+    // accepted. Lower = stricter (fewer wrong reads, more "teach" prompts);
+    // higher = looser (recognises more, small risk of a wrong guess you can fix).
+    var s = document.createElement("input"); s.type = "range"; s.min = 35; s.max = 62; s.value = Math.round(rankThr * 100);
+    s.addEventListener("input", function () { rankThr = +s.value / 100; suitThr = Math.round(rankThr * 80) / 100; });
     return s;
   }
   function seatSlider() {
@@ -1026,11 +1120,14 @@
     el.teach.appendChild(extra);
   }
 
-  // Pull both glyphs (rank + suit) out of a card region image, for corrections.
+  // Pull both glyphs (rank + suit) out of a card region image, for corrections
+  // and for building the DB. Normalised to the marks first so it matches how
+  // recognizeCard reads live crops.
   function extractGlyphs(img) {
-    var c = segmentCard(subImage(img, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
+    var card = normalizeCard(img);
+    var c = segmentCard(subImage(card, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
     if (c && c.suitSig && !c.cut) return c;
-    var w = segmentCard(img);
+    var w = segmentCard(card);
     if (w && w.suitSig && !w.cut) return w;
     return (c && c.rankSig) ? c : w;
   }
@@ -1129,7 +1226,9 @@
       return { cornerW: corner.width, cornerH: corner.height, bands: bands.map(function (b) { return [b.y0, b.y1]; }) };
     },
     _teach: function (label, sig, kind) { templates.push({ label: label, kind: kind || "card", red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
+    _extractGlyphs: extractGlyphs, _segmentCard: segmentCard, _nearest: nearestKind,
     _regions: function () { return regions; }, _templates: function () { return templates; },
+    _dbCount: function () { return dbTemplates.length; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
     _useStream: function (s) { if (!el.overlay) buildModal(); stream = s; video.srcObject = s; video.play(); },
     _start: startWatching, _videoParent: function () { return video && video.parentNode ? video.parentNode.className : null; },
