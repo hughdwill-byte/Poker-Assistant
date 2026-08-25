@@ -35,14 +35,16 @@
   // Numeric regions read by digit OCR.
   var NUM_KEYS = ["pot", "mystack"];
   // Seat "presence" regions - a spot on each seat that shows background when
-  // empty and the player's avatar when someone is sitting there. Max 6 seats.
-  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4", "s5"];
+  // empty and the player's avatar when someone is sitting there. Max 5 players
+  // at the table, including you.
+  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4"];
+  var MAX_PLAYERS = 5;
   var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS, SEAT_KEYS);
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
     pot: "Pot (number)", mystack: "My stack (number)",
-    s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5", s5: "Seat 6",
+    s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5",
   };
 
   // ---------- Persistence ----------
@@ -347,33 +349,69 @@
     }
     return (best && bs < (kind === "suit" ? sthr : gthr)) ? best.label : null;
   }
-  // Read the rank (top ink band) and the suit (the band right below it) inside
-  // an image. Works whether `img` is a whole card's corner or a tightly-boxed
-  // rank+suit index (which is how you box a card that's partly hidden).
-  function readRankSuit(img) {
+  // Any ink found strictly below a y line (used to locate a small/faint suit pip
+  // that didn't clear the row-band threshold). Ignores stray single pixels.
+  function rawInkBelow(mask, w, h, yStart) {
+    var y0 = h, y1 = -1, total = 0;
+    for (var y = yStart + 1; y < h; y++) {
+      var rowc = 0;
+      for (var x = 0; x < w; x++) if (mask[y * w + x]) { rowc++; }
+      if (rowc) { if (y < y0) y0 = y; if (y > y1) y1 = y; total += rowc; }
+    }
+    if (y1 < 0 || total < 3) return null;
+    return { y0: y0, y1: y1 };
+  }
+  // Split a card image into its rank glyph (top) and suit glyph (below it). The
+  // suit is ALWAYS taken from below the rank: first as its own ink band, and if
+  // it's too small/faint to form a band, by scanning the raw ink underneath. If
+  // there is genuinely nothing below the rank, the box is cut off (`cut`) - we
+  // never fall back to handing the rank crop back as if it were the suit.
+  function segmentCard(img) {
     var cw = img.width, ch = img.height;
     var mask = inkMask(img, estimateBg(img));
     var bands = mergeBands(rowBands(mask, cw, ch));
-    if (!bands.length) return { status: "unknown" };
+    if (!bands.length) return null;
     var rankBand = bands[0];
-    var suitBand = bands.length >= 2 ? bands[1] : null; // suit sits just under the rank
-
     var rcb = colBounds(mask, cw, rankBand.y0, rankBand.y1);
-    var rankImg = cropRect(img, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1);
-    var rankSig = { vec: glyphVec(mask, cw, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1), red: 0 };
-    var rank = matchKind(rankSig, "rank", false);
-    if (!rank) {
-      if (isIgnored(rankSig, "rank")) return { status: "unknown" };
-      return { status: "unknown", teach: "rank", img: rankImg, sig: rankSig };
+    var out = {
+      rankImg: cropRect(img, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1),
+      rankSig: { vec: glyphVec(mask, cw, rcb.x0, rankBand.y0, rcb.x1, rankBand.y1), red: 0 },
+    };
+    var suitReg = bands.length >= 2
+      ? { y0: bands[1].y0, y1: bands[bands.length - 1].y1 }   // distinct suit band(s)
+      : rawInkBelow(mask, cw, ch, rankBand.y1);                // faint suit under the rank
+    if (suitReg) {
+      var scb = colBounds(mask, cw, suitReg.y0, suitReg.y1);
+      out.suitImg = cropRect(img, scb.x0, suitReg.y0, scb.x1, suitReg.y1);
+      out.suitSig = { vec: glyphVec(mask, cw, scb.x0, suitReg.y0, scb.x1, suitReg.y1), red: boxColor(img, scb.x0, suitReg.y0, scb.x1, suitReg.y1).red };
+    } else {
+      out.cut = true; // nothing below the rank -> suit isn't in the crop
+      var sy0 = Math.min(ch - 1, rankBand.y1 + 1);
+      out.suitImg = cropRect(img, 0, sy0, cw - 1, ch - 1); // the (blank) area we looked in
     }
-    if (!suitBand) return { status: "unknown", teach: "suit", img: rankImg, sig: rankSig };
-    var scb = colBounds(mask, cw, suitBand.y0, suitBand.y1);
-    var suitImg = cropRect(img, scb.x0, suitBand.y0, scb.x1, suitBand.y1);
-    var suitSig = { vec: glyphVec(mask, cw, scb.x0, suitBand.y0, scb.x1, suitBand.y1), red: boxColor(img, scb.x0, suitBand.y0, scb.x1, suitBand.y1).red };
-    var suit = matchKind(suitSig, "suit", true);
+    return out;
+  }
+  var EMPTY_SIG = { vec: new Float32Array(GW * GH), red: 0 };
+  // Read the rank (top) then the suit (below it). Once the rank is recognised it
+  // stays recognised, so the next prompt is the SUIT - shown from the region
+  // under the rank, never the rank glyph again.
+  function readRankSuit(img) {
+    var seg = segmentCard(img);
+    if (!seg) return { status: "unknown" };
+    var rank = matchKind(seg.rankSig, "rank", false);
+    if (!rank) {
+      if (isIgnored(seg.rankSig, "rank")) return { status: "unknown" };
+      return { status: "unknown", teach: "rank", img: seg.rankImg, sig: seg.rankSig };
+    }
+    if (seg.cut || !seg.suitSig) {
+      // Rank is known; the suit just isn't inside the box -> ask for the suit
+      // but flag that the box looks cut off so the user can re-box it.
+      return { status: "unknown", teach: "suit", cut: true, img: seg.suitImg, sig: seg.suitSig || EMPTY_SIG };
+    }
+    var suit = matchKind(seg.suitSig, "suit", true);
     if (!suit) {
-      if (isIgnored(suitSig, "suit")) return { status: "unknown" };
-      return { status: "unknown", teach: "suit", img: suitImg, sig: suitSig };
+      if (isIgnored(seg.suitSig, "suit")) return { status: "unknown" };
+      return { status: "unknown", teach: "suit", img: seg.suitImg, sig: seg.suitSig };
     }
     return { status: "card", id: Poker.makeId(RANK_VAL[rank], SUIT_CODE[suit]), label: rank + suit };
   }
@@ -388,6 +426,9 @@
     if (r1.status === "card") return r1;
     var r2 = readRankSuit(regionImg);
     if (r2.status === "card") return r2;
+    // Prefer a suit prompt that actually has a suit crop over a cut-off one.
+    if (r1.teach === "suit" && !r1.cut) return r1;
+    if (r2.teach === "suit" && !r2.cut) return r2;
     if (r1.teach === "suit") return r1;
     if (r2.teach === "suit") return r2;
     return r1.teach ? r1 : (r2.teach ? r2 : { status: "unknown" });
@@ -465,7 +506,7 @@
         if (res.status === "card") setSlot(reading, key, res.id);
         else if (res.status === "empty") setSlot(reading, key, null);
         // 'unknown' -> leave the manual value alone; queue a glyph to teach
-        if (res.status === "unknown" && res.teach) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig });
+        if (res.status === "unknown" && res.teach) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut });
       }
     });
     // Numeric regions (pot / my stack) via digit OCR.
@@ -491,7 +532,7 @@
     var seatReady = SEAT_KEYS.some(function (k) { return regions[k] && seatBase[k]; });
     if (seatReady) {
       var heroIdx = API.getInfo ? API.getInfo().heroIndex : 0;
-      var seatDefs = 0, actives = [];
+      var seatDefs = 0, occupied = 0;
       SEAT_KEYS.forEach(function (key, idx) {
         var rect = regions[key];
         if (!rect) return;
@@ -500,17 +541,23 @@
         var sig = signature(regionImageData(rect));
         var occ;
         if (idx === heroIdx) occ = true;          // you are always at your seat
-        else if (!base) occ = true;               // this seat has no baseline -> assume present
-        else occ = rms(base.vec, sig.vec) > occThr;
+        else if (!base) occ = true;               // no baseline captured yet -> assume present
+        else occ = rms(base.vec, sig.vec) > occThr; // differs from the empty look -> a player
         var st = stab[key];
         var val = "seat:" + (occ ? 1 : 0);
         if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
         st.occ = occ; st.sig = sig;
-        if (st.count >= 2) actives.push({ index: idx, active: occ });
+        if (occ) occupied++;
       });
+      // Drive the player count from how many seats are OCCUPIED (a seat that
+      // matches its empty baseline drops out), capped at 5 including you. Gate on
+      // a stable count so a one-frame flicker doesn't churn the table.
       if (seatDefs >= 2) {
-        reading.numPlayers = Math.min(6, seatDefs);
-        if (actives.length) reading.actives = actives;
+        var n = Math.max(2, Math.min(MAX_PLAYERS, occupied));
+        var cst = stab.__seatcount;
+        var cval = "n:" + n;
+        if (cst && cst.val === cval) cst.count++; else stab.__seatcount = cst = { val: cval, count: 1 };
+        if (cst.count >= 2) reading.numPlayers = n;
       }
     }
     API.applyReading(reading);
@@ -654,10 +701,11 @@
       "every card. Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger - accuracy improves " +
       "a lot. Any misread card is one tap to fix on the table."));
     modal.appendChild(h("p", "watch-note",
-      "Players coming & going: box a spot on each seat (Seat 1-6) that shows the table background " +
-      "when empty and the player's avatar when taken. With those seats empty, press Capture empty " +
-      "seats. Then a seat flips on/off as players sit down or leave, and the matching seat on your " +
-      "table activates or greys out. Mark your own seat with its ⌂ button."));
+      "Players coming & going (up to 5 seats, including you): box a spot on each seat (Seat 1-5) " +
+      "that shows the empty table when nobody's there and the player's avatar when taken. With " +
+      "those seats empty, press Capture empty seats to record how \"empty\" looks. From then on any " +
+      "seat that no longer matches its empty snapshot counts as a player, and the table's player " +
+      "count follows how many seats are taken. Mark your own seat with its ⌂ button."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
@@ -723,7 +771,7 @@
     });
     saveJSON(LS_SEATBASE, seatBase);
     setStatus(n ? ("Captured empty baseline for " + n + " seat(s). Seats now toggle as players come and go.")
-                : "Calibrate seat boxes first (Seat 1-6), then capture.");
+                : "Calibrate seat boxes first (Seat 1-5), then capture.");
   }
 
   function setStatus(t) { if (el.status) el.status.textContent = t; }
@@ -908,13 +956,19 @@
     el.teach.hidden = false;
     el.teach.innerHTML = "";
     var isCard = teaching.kind !== "digit";
+    var partName = teaching.kind === "suit" ? "suit" : teaching.kind === "rank" ? "number" : "digit";
     el.teach.appendChild(h("div", "teach-title",
-      "Unrecognised in " + REGION_LABELS[teaching.key] +
-      (isCard ? " — pick it, switch Rank/Suit, or Re-box:" : " — pick the digit, or Re-box:")));
+      (teaching.cut ? "The " + partName + " isn't inside the box for " : "Unrecognised " + partName + " in ") +
+      REGION_LABELS[teaching.key] +
+      (isCard ? (teaching.cut ? " — Re-box to include it:" : " — pick it, switch Rank/Suit, or Re-box:") : " — pick the digit, or Re-box:")));
     el.teach.appendChild(h("div", "teach-hint",
-      "This is exactly what the box captured (magnified). If it's cut off, blank " +
-      "or grabbing the wrong thing, use ↻ Re-box to redraw it — zoom the poker " +
-      "window first for a bigger, clearer target."));
+      teaching.cut
+        ? "The number was read fine, but nothing was found below it, so the " +
+          "box is cut off before the " + partName + ". Use ↻ Re-box to draw a box " +
+          "that includes the whole rank AND the suit under it."
+        : "This is exactly what the box captured (magnified) — and it's the " + partName +
+          ", nothing else. If it's cut off, blank or the wrong thing, use ↻ Re-box " +
+          "to redraw it; zoom the poker window first for a bigger, clearer target."));
     var body = h("div", "teach-body");
     var thumb = h("canvas", "teach-thumb");
     thumb.width = teaching.img.width; thumb.height = teaching.img.height;
@@ -974,25 +1028,11 @@
 
   // Pull both glyphs (rank + suit) out of a card region image, for corrections.
   function extractGlyphs(img) {
-    function grab(im) {
-      var cw = im.width, ch = im.height;
-      var mask = inkMask(im, estimateBg(im));
-      var bands = mergeBands(rowBands(mask, cw, ch));
-      if (!bands.length) return null;
-      var rb = bands[0], sb = bands.length >= 2 ? bands[1] : null;
-      var rcb = colBounds(mask, cw, rb.y0, rb.y1);
-      var o = { rankSig: { vec: glyphVec(mask, cw, rcb.x0, rb.y0, rcb.x1, rb.y1), red: 0 } };
-      if (sb) {
-        var scb = colBounds(mask, cw, sb.y0, sb.y1);
-        o.suitSig = { vec: glyphVec(mask, cw, scb.x0, sb.y0, scb.x1, sb.y1), red: boxColor(im, scb.x0, sb.y0, scb.x1, sb.y1).red };
-      }
-      return o;
-    }
-    var c = grab(subImage(img, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
-    if (c && c.suitSig) return c;
-    var w = grab(img);
-    if (w && w.suitSig) return w;
-    return c || w;
+    var c = segmentCard(subImage(img, CORNER.x0, CORNER.y0, CORNER.x1, CORNER.y1));
+    if (c && c.suitSig && !c.cut) return c;
+    var w = segmentCard(img);
+    if (w && w.suitSig && !w.cut) return w;
+    return (c && c.rankSig) ? c : w;
   }
   // Correct a card region to a specific card AND teach its glyphs.
   function correctCard(key, rankLabel, suitLabel) {

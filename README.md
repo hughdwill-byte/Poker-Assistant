@@ -144,6 +144,17 @@ different site/tab than the app itself and update the odds live.
 6. Mark the **dealer** with the **D** button on a seat and the advice shows your
    table position (button / blinds / cutoff …).
 
+**Players in & out (up to 5 seats, including you).** Box a spot on each seat
+that looks like the *empty* table when nobody's there, and with those seats
+empty press **Capture empty seats** to record how "empty" looks. From then on
+any seat that no longer matches its empty snapshot counts as a player, and the
+table's player count follows how many seats are taken.
+
+The recogniser reads a card as its **rank first, then the suit below it** — once
+it knows the rank it won't ask about it again; the next prompt is the suit,
+shown from the area *underneath* the rank. If your box is cut off above the
+suit, it tells you so and asks you to **Re-box** rather than guessing.
+
 Numbers are read with a decimal point, so **1.2M** is read as 1,200,000 (not
 12,000,000), and **K** / **M** suffixes and thousands separators are handled.
 
