@@ -1097,6 +1097,8 @@
     var seatRow = h("div", "watch-seatrow");
     seatRow.appendChild(labelWrap("Opponent seats", seatCountInput()));
     seatRow.appendChild(mkbtn("Capture felt colour", captureFelt, "primary"));
+    el.feltSwatch = h("span", "felt-swatch"); el.feltSwatch.title = "Learned felt colour";
+    seatRow.appendChild(el.feltSwatch);
     seatRow.appendChild(mkbtn("Capture empty spots", captureEmpty));
     seatRow.appendChild(labelWrap("Folded (felt)", greenSlider()));
     seatRow.appendChild(labelWrap("Empty (cross)", blueSlider()));
@@ -1179,6 +1181,7 @@
 
     refreshChips();
     updateButtons();
+    showFeltSwatch();
   }
 
   function mkbtn(text, fn, kind) {
@@ -1211,16 +1214,22 @@
     s.addEventListener("input", function () { greenThr = +s.value / 100; });
     return s;
   }
-  // Learn the exact table felt colour from a cards box that's currently showing
+  // Learn the exact table felt colour from a seat box that's currently showing
   // plain felt (a folded/empty seat), so folded-vs-in-hand becomes reliable.
   function captureFelt() {
-    if (!grabFrame()) { setStatus("Share a tab first."); return; }
-    var k = SEATCARD_KEYS.slice(0, seatCount).filter(function (c) { return regions[c]; })[0];
-    if (!k) { setStatus("Box a seat's cards spot first, then capture with felt showing."); return; }
+    if (!grabFrame()) { setStatus("⚠ Share a tab first, then press Capture felt colour."); return; }
+    // Prefer a cards box; fall back to any boxed seat spot so it works either way.
+    var k = SEATCARD_KEYS.slice(0, seatCount).filter(function (c) { return regions[c]; })[0]
+         || SEAT_KEYS.slice(0, seatCount).filter(function (s) { return regions[s]; })[0];
+    if (!k) { setStatus("⚠ Box a seat's cards (or spot) first, then capture with the felt showing."); return; }
     seatRef.feltRGB = medianRGB(regionImageData(regions[k]));
     saveJSON(LS_SEATREF, seatRef);
     for (var i = 0; i < SEAT_KEYS.length; i++) stab[SEAT_KEYS[i]] = null;
-    setStatus("Learned the felt colour (" + seatRef.feltRGB.join(",") + "). A cards box mostly this colour = folded.");
+    showFeltSwatch();
+    setStatus("✓ Learned the felt colour rgb(" + seatRef.feltRGB.join(",") + "). A cards box mostly this colour now reads as FOLDED.");
+  }
+  function showFeltSwatch() {
+    if (el.feltSwatch) el.feltSwatch.style.background = seatRef.feltRGB ? "rgb(" + seatRef.feltRGB.join(",") + ")" : "transparent";
   }
   // Learn the EMPTY spot look from the boxed spot boxes (do this with the seats empty).
   function captureEmpty() {

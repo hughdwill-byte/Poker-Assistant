@@ -648,6 +648,7 @@ body {
 .watch-chip.wseat.set { color: #a78bfa; border-color: rgba(167,139,250,.5); }
 .watch-chip.beyond { opacity: .35; }   /* seat beyond the chosen count - not watched */
 .watch-seatrow { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 4px 0 10px; }
+.felt-swatch { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line); background: transparent; display: inline-block; margin-left: -8px; }
 .watch-seatrow .seatnote { flex: 1 1 240px; margin: 0; }
 .watch-seatcount {
   width: 64px; background: var(--panel-2); border: 1px solid var(--line);
