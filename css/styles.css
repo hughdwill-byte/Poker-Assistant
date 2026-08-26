@@ -624,6 +624,8 @@ body {
   border: 1px solid var(--line); color: var(--text); font-weight: 700; font-size: 12px;
 }
 .strip-num.q { color: var(--accent); border-color: var(--accent); }
+.strip-num.clickable { cursor: pointer; }
+.strip-num.clickable:hover { outline: 2px solid var(--accent); }
 .teach-grid.digit { grid-template-columns: repeat(7, 1fr); }
 .teach-grid.digit .teach-pick { font-size: 15px; padding: 8px 0; }
 .teach-grid.suit { grid-template-columns: repeat(4, 1fr); }
