@@ -503,9 +503,6 @@
       var fd = -1;
       for (var e = 0; e < numTokens.length; e++) { if (numTokens[e].t === "lab" && /[0-9]/.test(numTokens[e].lab)) { fd = e; break; } }
       if (fd > 0) numTokens = numTokens.slice(fd);
-      // There's an AMOUNT (even if untaught) when a distinct trailing group sits
-      // after the word gap, or a digit was actually read.
-      amountPresent = splitAt >= 0 || fd >= 0;
     }
     var str = "", unknowns = [], numGlyphs = [];
     for (var k = 0; k < numTokens.length; k++) {
@@ -516,8 +513,10 @@
       str += "?"; unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
       numGlyphs.push({ char: null, sig: tk.sig, img: tk.img });
     }
-    // For a plain numeric box, "amount present" just means some digits were read.
-    if (!opts.labelText) amountPresent = /[0-9]/.test(str);
+    // "Amount present" now means a real digit was READ - the only reliable signal
+    // that there's a bet. A word-only button (CALL CHECK / BET) has no digit, so
+    // it correctly reads as a check rather than a mystery "teach the amount".
+    amountPresent = /[0-9]/.test(str);
     // numGlyphs is every character-glyph in the amount, in order (recognised or
     // not) - used by "type what this shows" to teach the whole number at once.
     return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), amountPresent: amountPresent, unknowns: unknowns, glyphs: numGlyphs };
@@ -1073,7 +1072,12 @@
       // shown unknown digits for a couple of frames, surface the leftmost one.
       if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
       else delete numUnkStreak[key];
-      if ((numUnkStreak[key] || 0) >= 2) {
+      // For the call button, only auto-prompt once a digit is already recognised
+      // (a real amount) so a word-only CALL/CHECK/BET button never asks you to
+      // teach its letters. Pot/Stack always prompt. Either way, clicking the chip
+      // to type the value teaches it directly.
+      var mayPrompt = key !== "tocall" || num.hasDigit;
+      if (mayPrompt && (numUnkStreak[key] || 0) >= 2) {
         unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
     });
@@ -1361,6 +1365,8 @@
       if (!e.target.closest) return;
       var seat = e.target.closest("[data-seat]");
       if (seat) { openModal(); openSeatMenu(seat.getAttribute("data-seat")); return; }
+      var numk = e.target.closest("[data-numkey]");
+      if (numk) { openModal(); teachNumberValue(numk.getAttribute("data-numkey")); return; }
       var chip = e.target.closest("[data-key]");
       if (chip) { openModal(); openCorrect(chip.getAttribute("data-key")); }
     });
@@ -1881,31 +1887,63 @@
     setStatus("Set " + REGION_LABELS[key] + " = " + rankLabel + suitLabel +
       (learned ? " and learned it" + (dropped ? " (unlearned " + dropped + " wrong match" + (dropped === 1 ? "" : "es") + ")" : "") + " — it will stay until the card changes." : "."));
   }
-  // Teach a WHOLE number at once: you type what the Pot / Stack / Call box shows,
-  // and each on-screen digit (in order) is learned as the matching character. The
-  // fastest way to teach the number font - no waiting for prompts.
+  // Teach a WHOLE number at once with an IN-PAGE box (no browser prompt, which
+  // some webviews block): it shows the character crops it found, you type what
+  // they say, and each is learned as the matching character. Fastest way to teach
+  // the number font - no waiting for prompts.
   function teachNumberValue(key) {
+    if (!el.correct) return;
     if (!grabFrame() || !regions[key]) { setStatus("Box " + REGION_LABELS[key] + " first."); return; }
     var num = readNumber(regionImageData(regions[key]), key === "tocall" ? { labelText: true } : null);
     var glyphs = num.glyphs || [];
-    if (!glyphs.length) { setStatus(REGION_LABELS[key] + " shows no number right now — try when a number is on screen."); return; }
-    var guess = num.str.replace(/[?.]/g, "");
-    var typed = window.prompt("Type EXACTLY what " + REGION_LABELS[key] + " shows — digits, and K or M if present (ignore commas). It sees " + glyphs.length + " character(s):", guess);
-    if (typed == null) return;
-    var chars = typed.toUpperCase().replace(/[^0-9KM]/g, "").split("");
-    if (chars.length !== glyphs.length) {
-      setStatus("You typed " + chars.length + " character(s) but I see " + glyphs.length + " — retype without commas, or re-box tighter to the number.");
-      return;
+    el.correct.innerHTML = "";
+    el.correct.appendChild(h("div", "teach-title", "Teach " + REGION_LABELS[key] + " — type what these characters are:"));
+    if (!glyphs.length) {
+      el.correct.appendChild(h("p", "watch-note",
+        "No number is showing in that box right now. Open this again while a number (e.g. a call amount) is on screen, or Re-box the region tighter around the number."));
+      var only = h("div", "teach-extra"); only.appendChild(mkbtn("Close", closeCorrect)); el.correct.appendChild(only);
+      el.correct.hidden = false; return;
     }
-    var dropped = 0;
-    for (var i = 0; i < glyphs.length; i++) {
-      dropped += unlearnConfusers(glyphs[i].sig, "digit", chars[i]);
-      templates.push({ label: chars[i], kind: "digit", red: glyphs[i].sig.red || 0, holes: glyphs[i].sig.holes, vec: Array.prototype.slice.call(glyphs[i].sig.vec) });
+    var thumbs = h("div", "num-teach-thumbs");
+    glyphs.forEach(function (g) {
+      var cv = h("canvas", "teach-thumb"); cv.width = g.img.width; cv.height = g.img.height;
+      cv.getContext("2d").putImageData(g.img, 0, 0); thumbs.appendChild(cv);
+    });
+    el.correct.appendChild(thumbs);
+    el.correct.appendChild(h("div", "watch-note",
+      "It found " + glyphs.length + " character(s) above. Type exactly those " + glyphs.length +
+      " (digits, and K or M if shown - no commas):"));
+    var input = document.createElement("input");
+    input.type = "text"; input.className = "num-teach-input"; input.setAttribute("inputmode", "text");
+    input.value = num.str.replace(/[?.]/g, "");
+    el.correct.appendChild(input);
+    var msg = h("div", "watch-note num-teach-msg", "");
+    el.correct.appendChild(msg);
+    function learn() {
+      var chars = (input.value || "").toUpperCase().replace(/[^0-9KM]/g, "").split("");
+      if (chars.length !== glyphs.length) {
+        msg.textContent = "You typed " + chars.length + " but there are " + glyphs.length +
+          " character(s) above — match them one-for-one (no commas).";
+        return;
+      }
+      var dropped = 0;
+      for (var i = 0; i < glyphs.length; i++) {
+        dropped += unlearnConfusers(glyphs[i].sig, "digit", chars[i]);
+        templates.push({ label: chars[i], kind: "digit", red: glyphs[i].sig.red || 0, holes: glyphs[i].sig.holes, vec: Array.prototype.slice.call(glyphs[i].sig.vec) });
+      }
+      saveJSON(LS_TEMPLATES, templates);
+      stab[key] = null; delete numUnkStreak[key];
+      closeCorrect();
+      setStatus("Learned " + chars.length + " character(s) for " + REGION_LABELS[key] +
+        (dropped ? " (fixed " + dropped + " wrong match" + (dropped === 1 ? "" : "es") + ")" : "") + " — numbers should read now.");
     }
-    saveJSON(LS_TEMPLATES, templates);
-    stab[key] = null; delete numUnkStreak[key];
-    setStatus("Learned " + chars.length + " digit(s) for " + REGION_LABELS[key] +
-      (dropped ? " (fixed " + dropped + " wrong match" + (dropped === 1 ? "" : "es") + ")" : "") + " — numbers should read now.");
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); learn(); } });
+    var row = h("div", "teach-extra");
+    row.appendChild(mkbtn("Learn", learn));
+    row.appendChild(mkbtn("Cancel", closeCorrect));
+    el.correct.appendChild(row);
+    el.correct.hidden = false;
+    setTimeout(function () { input.focus(); input.select(); }, 0);
   }
   // Set a card by hand and LATCH it for the rest of the hand: it holds until the
   // community cards clear (a new deal), and the live reader won't revert it.

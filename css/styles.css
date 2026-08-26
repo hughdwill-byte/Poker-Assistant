@@ -626,6 +626,11 @@ body {
 .strip-num.q { color: var(--accent); border-color: var(--accent); }
 .strip-num.clickable { cursor: pointer; }
 .strip-num.clickable:hover { outline: 2px solid var(--accent); }
+.num-teach-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
+.num-teach-thumbs .teach-thumb { height: 40px; width: auto; image-rendering: pixelated; background: #111; border: 1px solid var(--line); border-radius: 4px; }
+.num-teach-input { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 10px 12px; font-size: 18px;
+  letter-spacing: 2px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel, #1a1d22); color: var(--text); }
+.num-teach-msg { color: var(--accent); min-height: 1em; }
 .teach-grid.digit { grid-template-columns: repeat(7, 1fr); }
 .teach-grid.digit .teach-pick { font-size: 15px; padding: 8px 0; }
 .teach-grid.suit { grid-template-columns: repeat(4, 1fr); }
