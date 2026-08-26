@@ -647,6 +647,9 @@ body {
   background: rgba(255,255,255,.05); color: var(--muted); font-weight: 700; font-size: 12px;
 }
 .strip-seat.on { color: #c4b5fd; border-color: rgba(167,139,250,.55); }
+.strip-seat.active { color: #4ade80; border-color: rgba(74,222,128,.55); }   /* in the hand */
+.strip-seat.folded { color: #f5b93b; border-color: rgba(245,185,59,.45); }   /* folded (faded) */
+.strip-seat.empty  { color: var(--muted); border-style: dashed; }            /* empty (＋) */
 .strip-seat.nobase { opacity: .55; }
 
 /* Watch mode: grouped calibration chips */

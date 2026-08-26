@@ -37,17 +37,17 @@
   var REGION_KEYS = ["hero0", "hero1", "b0", "b1", "b2", "b3", "b4"];
   // Numeric regions read by digit OCR.
   var NUM_KEYS = ["pot", "mystack"];
-  // Seat "presence" regions - a spot on each seat that shows background when
-  // empty and the player's avatar when someone is sitting there. Max 5 players
-  // at the table, including you.
-  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4"];
-  var MAX_PLAYERS = 5;
+  // Seat "presence" regions - a spot on each seat that shows the empty plus-sign
+  // when nobody's there, a full-opacity avatar for a player in the hand, and a
+  // faded (low-opacity) avatar for a player who has folded. Up to 7 players.
+  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4", "s5", "s6"];
+  var MAX_PLAYERS = 7;
   var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS, SEAT_KEYS);
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
     pot: "Pot (number)", mystack: "My stack (number)",
-    s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5",
+    s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5", s5: "Seat 6", s6: "Seat 7",
   };
 
   // ---------- Persistence ----------
@@ -82,6 +82,7 @@
     });
   })();
   var occThr = 0.55;                          // how different from empty = "occupied"
+  var activeThr = 0.16;                        // min colour vibrancy for a FULL-opacity (in-hand) player
 
   // ---------- Card label <-> id ----------
   var RANK_FROM = { A: 14, K: 13, Q: 12, J: 11, T: 10, "10": 10, "9": 9, "8": 8, "7": 7, "6": 6, "5": 5, "4": 4, "3": 3, "2": 2 };
@@ -138,6 +139,18 @@
     var s = 0, n = a.length;
     for (var i = 0; i < n; i++) { var d = a[i] - b[i]; s += d * d; }
     return Math.sqrt(s / n);
+  }
+  // Mean colour "vibrancy" (saturation) of a region, 0..1. A full-opacity player
+  // avatar is vivid; a folded avatar is faded (blended with felt) and an empty
+  // seat is a flat plus-sign - so vibrancy separates an in-hand player from a
+  // folded one.
+  function regionVibrancy(img) {
+    var d = img.data, n = 0, sat = 0;
+    for (var i = 0; i < d.length; i += 4) {
+      var mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+      sat += (mx - mn); n++;
+    }
+    return n ? (sat / n) / 255 : 0;
   }
 
   // A higher-resolution GREYSCALE "ink-shape" descriptor for matching individual
@@ -721,34 +734,36 @@
         unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
     });
-    // Seat presence: a seat is "occupied" when its spot differs from the empty
-    // baseline. Only drives the table once you've captured a baseline (so
-    // calibrating seat boxes alone never changes your player count).
+    // Seat state: each boxed seat is classified empty (matches the captured
+    // plus-sign baseline), folded (an occupied but faded, low-vibrancy avatar),
+    // or active (a full-opacity avatar - a player in the hand). Only ACTIVE
+    // players count toward the odds. Runs once a baseline has been captured.
     var seatReady = SEAT_KEYS.some(function (k) { return regions[k] && seatBase[k]; });
     if (seatReady) {
       var heroIdx = API.getInfo ? API.getInfo().heroIndex : 0;
-      var seatDefs = 0, occupied = 0;
+      var seatDefs = 0, activeCount = 0, heroSeen = false;
       SEAT_KEYS.forEach(function (key, idx) {
         var rect = regions[key];
         if (!rect) return;
         seatDefs++;
-        var base = seatBase[key];
-        var sig = signature(regionImageData(rect));
-        var occ;
-        if (idx === heroIdx) occ = true;          // you are always at your seat
-        else if (!base) occ = true;               // no baseline captured yet -> assume present
-        else occ = rms(base.vec, sig.vec) > occThr; // differs from the empty look -> a player
+        var img = regionImageData(rect);
+        var sig = signature(img), vib = regionVibrancy(img);
+        var base = seatBase[key], state;
+        if (idx === heroIdx) { state = "active"; heroSeen = true; }        // you are in your hand
+        else if (!base) state = "active";                                  // no baseline yet -> assume in
+        else if (rms(base.vec, sig.vec) <= occThr) state = "empty";        // matches the empty plus-sign
+        else state = vib >= activeThr ? "active" : "folded";               // vivid = in hand, faded = folded
         var st = stab[key];
-        var val = "seat:" + (occ ? 1 : 0);
+        var val = "seat:" + state;
         if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
-        st.occ = occ; st.sig = sig;
-        if (occ) occupied++;
+        st.state = state; st.sig = sig; st.vib = vib;
+        if (st.count >= 2 && state === "active" && idx !== heroIdx) activeCount++;
       });
-      // Drive the player count from how many seats are OCCUPIED (a seat that
-      // matches its empty baseline drops out), capped at 5 including you. Gate on
-      // a stable count so a one-frame flicker doesn't churn the table.
-      if (seatDefs >= 2) {
-        var n = Math.max(2, Math.min(MAX_PLAYERS, occupied));
+      if (!heroSeen) activeCount++;                                        // your own seat isn't boxed
+      // Player count = how many are actually in the hand (active + you), capped
+      // at 7. Folded and empty seats drop out. Gate on a stable count.
+      if (seatDefs >= 1) {
+        var n = Math.max(2, Math.min(MAX_PLAYERS, activeCount));
         var cst = stab.__seatcount;
         var cval = "n:" + n;
         if (cst && cst.val === cval) cst.count++; else stab.__seatcount = cst = { val: cval, count: 1 };
@@ -873,7 +888,8 @@
     // Seat presence row
     var seatRow = h("div", "watch-seatrow");
     seatRow.appendChild(mkbtn("Capture empty seats", captureEmptySeats, "primary"));
-    seatRow.appendChild(labelWrap("Seat sensitivity", seatSlider()));
+    seatRow.appendChild(labelWrap("Empty vs taken", seatSlider()));
+    seatRow.appendChild(labelWrap("Folded vs in-hand", activeSlider()));
     modal.appendChild(seatRow);
 
     // Settings row
@@ -900,11 +916,11 @@
       "built-in database — usually no teaching at all. Tip: zoom the poker window (Ctrl/Cmd +) so " +
       "cards are bigger — accuracy improves. Any misread card is one tap to fix on the table."));
     modal.appendChild(h("p", "watch-note",
-      "Players coming & going (up to 5 seats, including you): box a spot on each seat (Seat 1-5) " +
-      "that shows the empty table when nobody's there and the player's avatar when taken. With " +
-      "those seats empty, press Capture empty seats to record how \"empty\" looks. From then on any " +
-      "seat that no longer matches its empty snapshot counts as a player, and the table's player " +
-      "count follows how many seats are taken. Mark your own seat with its ⌂ button."));
+      "Players coming & going (up to 7 seats): box the avatar spot on each seat (Seat 1-7). With the " +
+      "seats showing their empty plus-sign, press Capture empty seats to record the \"empty\" look. " +
+      "Each seat then reads as empty (＋), folded (a faded, low-opacity avatar ◑) or in the hand " +
+      "(a full-opacity avatar ●). Only in-hand players count toward the odds — use \"Folded vs " +
+      "in-hand\" to tune how vivid an avatar must be to count as playing. Mark your own seat with ⌂."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
@@ -959,6 +975,14 @@
     s.addEventListener("input", function () { occThr = +s.value / 100; });
     return s;
   }
+  function activeSlider() {
+    // Colour vibrancy above which an occupied seat counts as a full-opacity
+    // player in the hand (vs a faded, folded one). Lower = more seats count as
+    // in-hand. Only in-hand players are included in the odds.
+    var s = document.createElement("input"); s.type = "range"; s.min = 4; s.max = 40; s.value = Math.round(activeThr * 100);
+    s.addEventListener("input", function () { activeThr = +s.value / 100; });
+    return s;
+  }
   // Snapshot the current appearance of every calibrated seat spot as its
   // "empty" baseline. Do this when those seats have nobody sitting there.
   function captureEmptySeats() {
@@ -970,8 +994,8 @@
       n++;
     });
     saveJSON(LS_SEATBASE, seatBase);
-    setStatus(n ? ("Captured empty baseline for " + n + " seat(s). Seats now toggle as players come and go.")
-                : "Calibrate seat boxes first (Seat 1-5), then capture.");
+    setStatus(n ? ("Captured the empty (plus-sign) look for " + n + " seat(s). Seats now read empty / folded / in-hand as players come and go.")
+                : "Calibrate seat boxes first (Seat 1-7), then capture.");
   }
 
   function setStatus(t) { if (el.status) el.status.textContent = t; }
@@ -1169,11 +1193,13 @@
       SEAT_KEYS.forEach(function (key, idx) {
         if (!regions[key]) return;
         var st = stab[key];
-        var occ = st && typeof st.occ === "boolean" ? st.occ : true;
+        var state = st && st.state ? st.state : "active";
         var hasBase = !!seatBase[key];
-        var chip = h("span", "strip-seat" + (occ ? " on" : ""),
-          (idx + 1) + (occ ? "●" : "○"));
-        chip.title = "Seat " + (idx + 1) + (hasBase ? "" : " (capture empty baseline)");
+        var glyph = state === "active" ? "●" : state === "folded" ? "◑" : "＋";
+        var chip = h("span", "strip-seat " + state, (idx + 1) + glyph);
+        chip.title = "Seat " + (idx + 1) + " — " +
+          (state === "active" ? "in the hand" : state === "folded" ? "folded" : "empty") +
+          (hasBase ? "" : " (capture empty baseline)");
         if (!hasBase) chip.classList.add("nobase");
         el.strip.appendChild(chip);
       });
@@ -1384,6 +1410,7 @@
     _teach: function (label, sig, kind) { templates.push({ label: label, kind: kind || "card", red: sig.red, vec: Array.prototype.slice.call(sig.vec) }); },
     _extractGlyphs: extractGlyphs, _segmentCard: segmentCard, _nearest: nearestKind,
     _pointInPoly: pointInPoly, _maskOutsidePoly: maskOutsidePoly, _normalizeCard: normalizeCard,
+    _vibrancy: regionVibrancy, _seatKeys: function () { return SEAT_KEYS.slice(); },
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _dbCount: function () { return dbTemplates.length; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
