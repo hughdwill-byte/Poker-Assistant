@@ -761,7 +761,7 @@
         if (!best || tot < best.tot) best = { tot: tot, r: c.r, s: c.s };
       }
     });
-    if (best) return { status: "card", id: Poker.makeId(RANK_VAL[best.r.label], SUIT_CODE[best.s.label]), label: best.r.label + best.s.label };
+    if (best) return { status: "card", id: Poker.makeId(RANK_VAL[best.r.label], SUIT_CODE[best.s.label]), label: best.r.label + best.s.label, dist: best.tot };
     // No complete read - produce a teach prompt from the most-progressed crop
     // (prefer one whose rank already matched, so the next question is the suit).
     var tc = null;
@@ -816,7 +816,7 @@
     var rank = (rg && validInk(rg)) ? nearestKind(rg, "rank", false) : null;
     var suit = (sg && validInk(sg)) ? nearestSuit(sg) : null;
     if (rank && rank.dist < rankThr && suit && suit.dist < suitThr)
-      return { status: "card", id: Poker.makeId(RANK_VAL[rank.label], SUIT_CODE[suit.label]), label: rank.label + suit.label };
+      return { status: "card", id: Poker.makeId(RANK_VAL[rank.label], SUIT_CODE[suit.label]), label: rank.label + suit.label, dist: rank.dist + suit.dist };
     if (!(rank && rank.dist < rankThr)) {
       if (!rg || !validInk(rg) || isIgnored(rg, "rank")) return { status: "unknown" };
       return { status: "unknown", teach: "rank", img: rg.img, sig: rg };
@@ -977,6 +977,10 @@
       // Fresh hand: forget who was dealt in and any manual seat labels, so seats
       // are read cards-first from this deal onward.
       seatHadCards = {}; seatOverride = {};
+      // Reset the money for the new round: clear the pot and the price to call so
+      // last hand's numbers don't linger until they're re-read.
+      reading.pot = 0; reading.toCall = 0;
+      ["pot", "tocall"].forEach(function (k) { delete stab[k]; });
     }
     // Pass 2: emit each card. A latched or manually-set card HOLDS its value for
     // the whole hand (it won't flicker or revert); an unlatched spot latches the
@@ -989,15 +993,19 @@
       var res = st.res;
       if (res.status === "card") {
         // VOTE across several frames and commit only a clear majority, so one
-        // wrong read on the first pass doesn't get latched. A clean card wins
-        // fast (unanimous); a flickery one keeps sampling until one card leads.
+        // wrong read on the first pass doesn't get latched. Votes are weighted by
+        // how CONFIDENT each read was (a closer match counts more), so a card the
+        // reader is sure about (a King read cleanly) outvotes the odd borderline
+        // misread (a King momentarily matching a number). Once committed the card
+        // is latched and held for the rest of the hand.
         delete unknownStreak[key];
-        var v = votes[key] || (votes[key] = { counts: {}, total: 0, topId: null });
-        v.counts[res.id] = (v.counts[res.id] || 0) + 1; v.total++;
+        var v = votes[key] || (votes[key] = { counts: {}, total: 0, frames: 0, topId: null });
+        var wt = Math.max(0.12, 1 - (res.dist || 0));       // confidence weight
+        v.counts[res.id] = (v.counts[res.id] || 0) + wt; v.total += wt; v.frames++;
         var topId = null, topN = 0, secondN = 0;
         for (var vid in v.counts) { var vn = v.counts[vid]; if (vn > topN) { secondN = topN; topN = vn; topId = +vid; } else if (vn > secondN) secondN = vn; }
         v.topId = topId;
-        if ((topN >= 3 && (topN - secondN >= 2 || topN >= 0.67 * v.total)) || v.total >= VOTE_MAX) {
+        if ((topN >= 2.2 && (topN - secondN >= 1.6 || topN >= 0.67 * v.total)) || v.frames >= VOTE_MAX) {
           latch[key] = topId; emit(reading, key, topId); delete teachSuppressed[key]; delete votes[key];
         }
       } else if (res.status === "empty") {
@@ -1632,11 +1640,9 @@
         chip.textContent = Poker.cardLabel(latch[key]); chip.classList.add(cardColor(latch[key]));
         if (manual[key]) chip.classList.add("manual");
       }
-      // While still voting on a card, show the current leading guess (dimmed) so
-      // you can see what it's converging on, rather than the raw latest frame.
-      else if (votes[key] && votes[key].topId != null) {
-        chip.textContent = Poker.cardLabel(votes[key].topId); chip.classList.add(cardColor(votes[key].topId)); chip.classList.add("voting");
-      }
+      // While still deciding a card (voting) show a steady "…" - not a flickering
+      // guess - so it only lands ONE card on the table once it's sure, then holds.
+      else if (votes[key]) { chip.textContent = "…"; chip.classList.add("voting"); }
       else if (!st || st.count < 2) { chip.textContent = "…"; }
       else if (st.res.status === "card") { chip.textContent = Poker.cardLabel(st.res.id); chip.classList.add(cardColor(st.res.id)); }
       else if (st.res.status === "empty") { chip.textContent = "·"; chip.classList.add("off"); }
@@ -1806,18 +1812,39 @@
     return (c && c.rankSig) ? c : w;
   }
   // Correct a card region to a specific card AND teach its glyphs.
+  // Drop any TAUGHT glyph of this kind that this crop currently matches closely
+  // but which DISAGREES with the correction - that mis-taught exemplar is what
+  // was pulling the read to the wrong card, so unlearn it while we learn the
+  // right one. (Built-in exemplars can't be removed, but the freshly-taught
+  // correct crop matches at ~0 distance and outvotes them.)
+  function unlearnConfusers(sig, kind, correctLabel) {
+    if (!sig || !sig.vec) return 0;
+    var before = templates.length;
+    templates = templates.filter(function (t) {
+      if (t.kind !== kind || t.label === correctLabel) return true;
+      return rms(t.vec, sig.vec) >= 0.24;                  // a close wrong-label taught glyph -> drop
+    });
+    return before - templates.length;
+  }
   function correctCard(key, rankLabel, suitLabel) {
-    var learned = false;
+    var learned = false, dropped = 0;
     if (grabFrame() && regions[key]) {
       var suitK = suitKeyOf(key), rg, sg;
       if (regions[suitK]) { rg = boxGlyph(regionImageData(regions[key])); sg = boxGlyph(regionImageData(regions[suitK])); }
       else { var g = extractGlyphs(regionImageData(regions[key])); rg = g && g.rankSig; sg = g && g.suitSig; }
-      if (rg && rg.vec) { templates.push({ label: rankLabel, kind: "rank", red: 0, holes: rg.holes, vec: Array.prototype.slice.call(rg.vec) }); learned = true; }
-      if (sg && sg.vec) { templates.push({ label: suitLabel, kind: "suit", red: sg.red || 0, holes: sg.holes, vec: Array.prototype.slice.call(sg.vec) }); learned = true; }
+      if (rg && rg.vec) {
+        dropped += unlearnConfusers(rg, "rank", rankLabel);
+        templates.push({ label: rankLabel, kind: "rank", red: 0, holes: rg.holes, vec: Array.prototype.slice.call(rg.vec) }); learned = true;
+      }
+      if (sg && sg.vec) {
+        dropped += unlearnConfusers(sg, "suit", suitLabel);
+        templates.push({ label: suitLabel, kind: "suit", red: sg.red || 0, holes: sg.holes, vec: Array.prototype.slice.call(sg.vec) }); learned = true;
+      }
       if (learned) saveJSON(LS_TEMPLATES, templates);
     }
     pinCard(key, Poker.makeId(RANK_VAL[rankLabel], SUIT_CODE[suitLabel]));
-    setStatus("Set " + REGION_LABELS[key] + " = " + rankLabel + suitLabel + (learned ? " and learned it — it will stay until the card changes." : "."));
+    setStatus("Set " + REGION_LABELS[key] + " = " + rankLabel + suitLabel +
+      (learned ? " and learned it" + (dropped ? " (unlearned " + dropped + " wrong match" + (dropped === 1 ? "" : "es") + ")" : "") + " — it will stay until the card changes." : "."));
   }
   // Set a card by hand and LATCH it for the rest of the hand: it holds until the
   // community cards clear (a new deal), and the live reader won't revert it.
