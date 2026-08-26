@@ -79,7 +79,7 @@
   var templates = loadJSON(LS_TEMPLATES, []); // user-taught: [{kind, label, red, vec:[...]}]
   var ignored = loadJSON(LS_IGNORE, []);      // skipped glyph signatures (won't re-prompt)
   var seatCount = loadJSON(LS_SEATCOUNT, 5);  // opponents to watch (1..6)
-  var seatRef = loadJSON(LS_SEATREF, {});     // { feltRGB:[r,g,b], emptySig:[...] }
+  var seatRef = loadJSON(LS_SEATREF, {});     // { feltRGB:[r,g,b], emptyRGB:[r,g,b] }
 
   // Built-in card database (js/carddb.js): rank + suit glyph exemplars taken
   // from the real site's card art, so the whole deck is recognised out of the
@@ -169,8 +169,9 @@
     return n ? (sat / n) / 255 : 0;
   }
   var occThr = 0.55;                          // empty plus-sign template match distance
-  var blueThr = 0.03;                         // blue-cross fraction above which a spot is EMPTY
+  var blueThr = 0.03;                         // blue-cross fraction above which a spot is EMPTY (fallback)
   var greenThr = 0.12;                        // felt fraction in the cards box above which = FOLDED
+  var emptyThr = 0.5;                         // empty-spot colour fraction above which a spot is EMPTY
   // Colour make-up of a region: fraction of blue-cross pixels and green/felt
   // pixels. Green is caught with a loose test so darker/muted felts still count.
   function colorFracs(img) {
@@ -200,14 +201,19 @@
     }
     return hit / (n || 1);
   }
-  // The seat's state from your two boxes: a blue cross (or a match to the taught
-  // EMPTY look) in the "spot" box means EMPTY; otherwise the "cards" box being
-  // mostly FELT means the cards are gone -> FOLDED, and cards covering it -> IN
-  // THE HAND. Felt is matched against the colour you captured when available.
+  // The seat's state from your two boxes. EMPTY-vs-SEATED is told apart the same
+  // colour way FOLDED is: an empty seat's "spot" box shows the plain background
+  // (felt + the ＋ cross), whereas a seated player's avatar/logo covers it. So a
+  // spot box that's mostly the captured EMPTY colour = EMPTY; when the avatar
+  // covers it that fraction drops -> SEATED. Then, for a seated player, the
+  // "cards" box being mostly FELT means the cards are gone -> FOLDED, and cards
+  // covering it -> IN THE HAND. Both use the colours you captured when available.
   function classifySeatColor(spotImg, cardsImg) {
     if (spotImg) {
-      if (seatRef.emptySig && rms(seatRef.emptySig, signature(spotImg).vec) < 0.6) return "empty";
-      if (!seatRef.emptySig && colorFracs(spotImg).blue > blueThr) return "empty";
+      var emptyRef = seatRef.emptyRGB || seatRef.feltRGB;      // empty spot ~ felt colour
+      if (emptyRef) { if (colorFrac(spotImg, emptyRef, 48) > emptyThr) return "empty"; }
+      else if (seatRef.emptySig && rms(seatRef.emptySig, signature(spotImg).vec) < 0.6) return "empty";
+      else if (colorFracs(spotImg).blue > blueThr) return "empty";
     }
     if (cardsImg) {
       var feltFrac = seatRef.feltRGB ? colorFrac(cardsImg, seatRef.feltRGB, 48) : colorFracs(cardsImg).green;
@@ -1100,14 +1106,17 @@
     el.feltSwatch = h("span", "felt-swatch"); el.feltSwatch.title = "Learned felt colour";
     seatRow.appendChild(el.feltSwatch);
     seatRow.appendChild(mkbtn("Capture empty spots", captureEmpty));
+    el.emptySwatch = h("span", "felt-swatch"); el.emptySwatch.title = "Learned empty-spot colour";
+    seatRow.appendChild(el.emptySwatch);
     seatRow.appendChild(labelWrap("Folded (felt)", greenSlider()));
-    seatRow.appendChild(labelWrap("Empty (cross)", blueSlider()));
+    seatRow.appendChild(labelWrap("Empty (spot)", blueSlider()));
     seatRow.appendChild(h("span", "watch-note seatnote",
       "For each opponent box the empty-spot (where the ＋ cross shows) and the cards spot. Then, with " +
       "your cards-box showing the plain TABLE FELT (a folded/empty seat), press Capture felt colour so " +
       "it learns your exact felt — a cards box that's mostly that felt = folded, cards over it = in " +
-      "the hand. With the spots empty, press Capture empty spots. Click a seat in the strip to force " +
-      "a state. Only in-hand players count toward the odds."));
+      "the hand. With the seats empty, press Capture empty spots so it learns the empty-spot colour — " +
+      "a spot mostly that colour = empty, a player's avatar over it = seated. Click a seat in the " +
+      "strip to force a state. Only in-hand players count toward the odds."));
     modal.appendChild(seatRow);
 
     // Settings row
@@ -1147,9 +1156,10 @@
       "Seats (opponents only — you're the last player): set Opponent seats to how many are at your " +
       "table, then box that many seat spots (the extra Seat chips are dimmed). Teach the three " +
       "looks by clicking a seat in the strip and saying whether it's empty, folded or in the hand — " +
-      "or use \"All seats empty\" between hands to record them all at once. Empty is matched by the " +
-      "plus-sign shape; folded vs in-hand is told apart by how vivid (opaque) the avatar is, so it " +
-      "works across different player pictures. Each seat then shows ＋ empty, ◑ folded or ● in-hand, " +
+      "or use \"All seats empty\" between hands to record them all at once. Empty vs seated is told " +
+      "apart by colour (an empty spot shows the plain felt/＋ colour, a seated player's avatar covers " +
+      "it); folded vs in-hand the same way on the cards box, so it works across different player " +
+      "pictures. Each seat then shows ＋ empty, ◑ folded or ● in-hand, " +
       "and only in-hand opponents (+ you) count toward the odds. Mark your own seat with ⌂."));
 
     el.overlay = overlay;
@@ -1182,6 +1192,7 @@
     refreshChips();
     updateButtons();
     showFeltSwatch();
+    showEmptySwatch();
   }
 
   function mkbtn(text, fn, kind) {
@@ -1203,9 +1214,10 @@
     return s;
   }
   function blueSlider() {
-    // Blue-cross fraction above which the spot box reads as EMPTY.
-    var s = document.createElement("input"); s.type = "range"; s.min = 1; s.max = 20; s.value = Math.round(blueThr * 100);
-    s.addEventListener("input", function () { blueThr = +s.value / 100; });
+    // Empty-spot colour fraction above which the spot box reads as EMPTY. Higher =
+    // stricter (needs more of the empty colour showing to call a seat empty).
+    var s = document.createElement("input"); s.type = "range"; s.min = 20; s.max = 90; s.value = Math.round(emptyThr * 100);
+    s.addEventListener("input", function () { emptyThr = +s.value / 100; });
     return s;
   }
   function greenSlider() {
@@ -1231,23 +1243,27 @@
   function showFeltSwatch() {
     if (el.feltSwatch) el.feltSwatch.style.background = seatRef.feltRGB ? "rgb(" + seatRef.feltRGB.join(",") + ")" : "transparent";
   }
-  // Learn the EMPTY spot look from the boxed spot boxes (do this with the seats empty).
+  // Learn the EMPTY spot COLOUR from the boxed spot boxes (do this with the seats
+  // empty, so each spot shows only the felt + ＋ cross). Averaged median RGB, the
+  // same colour-fraction trick folded uses: later a spot mostly this colour reads
+  // EMPTY, and a seated player's avatar covering it reads SEATED.
   function captureEmpty() {
-    if (!grabFrame()) { setStatus("Share a tab first."); return; }
+    if (!grabFrame()) { setStatus("⚠ Share a tab first, then press Capture empty spots."); return; }
     var keys = SEAT_KEYS.slice(0, seatCount).filter(function (s) { return regions[s]; });
-    if (!keys.length) { setStatus("Box the empty-spot boxes first."); return; }
-    var acc = null, n = 0;
-    keys.forEach(function (s) {
-      var v = signature(regionImageData(regions[s])).vec;
-      if (!acc) { acc = new Float32Array(v.length); }
-      for (var i = 0; i < v.length; i++) acc[i] += v[i];
-      n++;
-    });
-    for (var i = 0; i < acc.length; i++) acc[i] /= n;
-    seatRef.emptySig = Array.prototype.slice.call(acc);
+    if (!keys.length) { setStatus("⚠ Box the empty-spot boxes first, then capture with the seats empty."); return; }
+    var rs = 0, gs = 0, bs = 0;
+    keys.forEach(function (s) { var m = medianRGB(regionImageData(regions[s])); rs += m[0]; gs += m[1]; bs += m[2]; });
+    var n = keys.length;
+    seatRef.emptyRGB = [Math.round(rs / n), Math.round(gs / n), Math.round(bs / n)];
+    delete seatRef.emptySig;                    // superseded by the colour reference
     saveJSON(LS_SEATREF, seatRef);
     for (var j = 0; j < SEAT_KEYS.length; j++) stab[SEAT_KEYS[j]] = null;
-    setStatus("Learned the empty-spot look from " + n + " seat(s).");
+    showEmptySwatch();
+    setStatus("✓ Learned the empty-spot colour rgb(" + seatRef.emptyRGB.join(",") +
+      ") from " + n + " seat(s). A spot mostly this colour reads EMPTY; a player's avatar over it reads SEATED.");
+  }
+  function showEmptySwatch() {
+    if (el.emptySwatch) el.emptySwatch.style.background = seatRef.emptyRGB ? "rgb(" + seatRef.emptyRGB.join(",") + ")" : "transparent";
   }
   // Number of opponent seats to watch (1..6). Setting it also updates the table
   // player count straight away (opponents + you), so you can just type the size.
@@ -1756,6 +1772,7 @@
     _pointInPoly: pointInPoly, _maskOutsidePoly: maskOutsidePoly, _normalizeCard: normalizeCard,
     _vibrancy: regionVibrancy, _seatKeys: function () { return SEAT_KEYS.slice(); },
     _classifySeatColor: classifySeatColor, _colorFracs: colorFracs, _recognizeSplit: recognizeSplit, _boxGlyph: boxGlyph,
+    _seatRef: function () { return seatRef; },
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _dbCount: function () { return dbTemplates.length; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
