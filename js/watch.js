@@ -885,6 +885,12 @@
   // ---------- Watch loop ----------
   var stab = {}; // key -> { val, count, sig }
   var teachSuppressed = {}; // key -> the reading value that was skipped/re-boxed
+  var unknownStreak = {};   // key -> consecutive frames a card has read "unknown"
+  // Keep re-reading a card this many frames before asking you to teach it - a
+  // card is usually just missed on the first pass (mid-deal, a flip animation,
+  // a moment of blur) and lands cleanly a frame or two later, so give the
+  // recogniser several goes before surfacing the teach prompt.
+  var UNKNOWN_GRACE = 6;
   // Cards LATCH for the whole hand: once a spot reads (or you set) a card, it
   // holds that value until the community cards clear (a new hand). `manual` marks
   // the ones you set by hand. Seat labels are a similar sticky override.
@@ -929,7 +935,7 @@
     function allEmpty(keys) { return keys.length && keys.every(function (k) { var s = stab[k]; return s && s.count >= 2 && s.res.status === "empty"; }); }
     var newHand = anyLatched && (boardBoxed.length ? allEmpty(boardBoxed) : allEmpty(REGION_KEYS.filter(function (k) { return regions[k]; })));
     if (newHand) {
-      REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; emit(reading, k, null); });
+      REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; delete unknownStreak[k]; emit(reading, k, null); });
       // Fresh hand: forget who was dealt in and any manual seat labels, so seats
       // are read cards-first from this deal onward.
       seatHadCards = {}; seatOverride = {};
@@ -944,12 +950,18 @@
       if (manual[key] || latch[key] != null) { emit(reading, key, latch[key]); return; }
       if (st.count >= 2) {
         var res = st.res;
-        if (res.status === "card") { latch[key] = res.id; emit(reading, key, res.id); delete teachSuppressed[key]; }
-        else if (res.status === "empty") { emit(reading, key, null); delete teachSuppressed[key]; }
+        if (res.status === "card") { latch[key] = res.id; emit(reading, key, res.id); delete teachSuppressed[key]; delete unknownStreak[key]; }
+        else if (res.status === "empty") { emit(reading, key, null); delete teachSuppressed[key]; delete unknownStreak[key]; }
         else if (res.status === "unknown" && res.teach) {
+          // Keep re-reading for a few frames first - a card is often just missed
+          // on the first pass and lands cleanly a frame later. Only once it has
+          // stayed unknown past the grace window do we surface the teach prompt.
+          unknownStreak[key] = (unknownStreak[key] || 0) + 1;
           var busy = teachSuppressed[key] !== undefined || (calibrating && (selectedKey === key || selectedKey === suitKey));
-          if (!busy) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut, rank: res.rank });
-        }
+          if (!busy && unknownStreak[key] >= UNKNOWN_GRACE) {
+            unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut, rank: res.rank });
+          }
+        } else { delete unknownStreak[key]; }
       }
     });
     // Numeric regions (pot / my stack / to-call button) via digit OCR.
@@ -1517,6 +1529,7 @@
     saveJSON(LS_REGIONS, regions);
     stab[key] = null;                      // re-read the new box from scratch
     delete teachSuppressed[key];           // a fresh box may now be readable
+    delete unknownStreak[key];             // give the fresh box a full grace window
     // Show the best-fit read for this box straight away (card regions).
     var guess = bestFitFor(key);
     setStatus(REGION_LABELS[key] + " traced." + (guess ? "  Best fit: " + guess : ""));
@@ -1555,6 +1568,8 @@
       else if (!st || st.count < 2) { chip.textContent = "…"; }
       else if (st.res.status === "card") { chip.textContent = Poker.cardLabel(st.res.id); chip.classList.add(cardColor(st.res.id)); }
       else if (st.res.status === "empty") { chip.textContent = "·"; chip.classList.add("off"); }
+      // Still inside the grace window: show it's working on it, not a hard "?".
+      else if ((unknownStreak[key] || 0) < UNKNOWN_GRACE) { chip.textContent = "…"; }
       else { chip.textContent = "?"; chip.classList.add("q"); }
       // Any boxed card slot can be tapped to correct/teach it by hand.
       if (regions[key]) { chip.setAttribute("data-key", key); chip.classList.add("clickable"); }
