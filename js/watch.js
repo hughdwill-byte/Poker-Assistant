@@ -294,7 +294,10 @@
       var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
       var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
       if (r > 90 && r - g > 38 && r - b > 38) red++;
-      if (mx - mn > 55 && mx > 70) colorful++; // saturated (not white/grey/black)
+      // Only VIVID colour counts as a chip icon - light/pastel coloured TEXT
+      // (e.g. light-blue digits on a blue button) must still be read, so the
+      // saturation bar is high enough to pass tinted text but catch a chip.
+      if (mx - mn > 115 && mx > 70) colorful++;
       tot++;
     }
     return { red: red / (tot || 1), colorful: colorful / (tot || 1) };
@@ -485,7 +488,7 @@
     // for an action button we split into clusters on the word/number space and
     // keep the amount cluster (with digits, else the rightmost), so the word is
     // ignored but the amount's own glyphs can still be taught.
-    var numTokens = toks, amountPresent = true;
+    var numTokens = toks, amountPresent = false;
     if (opts.labelText && toks.length) {
       // The space between the button's WORD (CALL/RAISE) and its amount is much
       // wider than the gaps within the word or within the number, so look for one
@@ -503,6 +506,10 @@
       var fd = -1;
       for (var e = 0; e < numTokens.length; e++) { if (numTokens[e].t === "lab" && /[0-9]/.test(numTokens[e].lab)) { fd = e; break; } }
       if (fd > 0) numTokens = numTokens.slice(fd);
+      // There's an AMOUNT (a bet), even before its digits are taught, when a
+      // distinct group sits after the button's word gap (CALL 10K), or a digit
+      // is already read. A lone word (CHECK) has no such gap -> it's a check.
+      amountPresent = splitAt >= 0 || fd >= 0;
     }
     var str = "", unknowns = [], numGlyphs = [];
     for (var k = 0; k < numTokens.length; k++) {
@@ -513,10 +520,8 @@
       str += "?"; unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
       numGlyphs.push({ char: null, sig: tk.sig, img: tk.img });
     }
-    // "Amount present" now means a real digit was READ - the only reliable signal
-    // that there's a bet. A word-only button (CALL CHECK / BET) has no digit, so
-    // it correctly reads as a check rather than a mystery "teach the amount".
-    amountPresent = /[0-9]/.test(str);
+    // For a plain numeric box (Pot / Stack) "amount present" just means a digit.
+    if (!opts.labelText) amountPresent = /[0-9]/.test(str);
     // numGlyphs is every character-glyph in the amount, in order (recognised or
     // not) - used by "type what this shows" to teach the whole number at once.
     return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), amountPresent: amountPresent, unknowns: unknowns, glyphs: numGlyphs };
@@ -1072,11 +1077,11 @@
       // shown unknown digits for a couple of frames, surface the leftmost one.
       if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
       else delete numUnkStreak[key];
-      // For the call button, only auto-prompt once a digit is already recognised
-      // (a real amount) so a word-only CALL/CHECK/BET button never asks you to
-      // teach its letters. Pot/Stack always prompt. Either way, clicking the chip
-      // to type the value teaches it directly.
-      var mayPrompt = key !== "tocall" || num.hasDigit;
+      // For the call button, only auto-prompt when there's an AMOUNT (a distinct
+      // number group after the word, e.g. CALL 10K) so a word-only CHECK button
+      // never asks you to teach its letters. Pot/Stack always prompt. Either way,
+      // clicking the chip to type the value teaches it directly.
+      var mayPrompt = key !== "tocall" || num.amountPresent;
       if (mayPrompt && (numUnkStreak[key] || 0) >= 2) {
         unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
