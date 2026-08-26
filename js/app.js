@@ -442,7 +442,7 @@
     }
 
     setRec(adv.tone, adv.headline, handLabel, adv.reasons, res, adv.stats);
-    var verb = adv.action + (adv.amount ? " " + adv.amount : "");
+    var verb = adv.verb || (adv.action + (adv.amount ? " " + adv.amount : ""));
     var meta = (res.equity * 100).toFixed(0) + "% to win" + positionNote();
     setBanner(adv.tone, verb, meta);
     renderOutlook(knownCards(hero), board);
