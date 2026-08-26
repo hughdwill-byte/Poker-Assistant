@@ -71,9 +71,10 @@
   var dbTemplates = (function () {
     var db = window.PokerCardDB;
     if (!db || !db.templates || !db.templates.length) return [];
+    // Greyscale coverage, one byte (0..255 -> 0..1) per cell, base64-encoded.
     function unpack(b64, n) {
       var bin = atob(b64), vec = new Float32Array(n);
-      for (var i = 0; i < n; i++) vec[i] = (bin.charCodeAt(i >> 3) >> (i & 7)) & 1;
+      for (var i = 0; i < n; i++) vec[i] = bin.charCodeAt(i) / 255;
       return vec;
     }
     return db.templates.map(function (t) {
@@ -139,10 +140,12 @@
     return Math.sqrt(s / n);
   }
 
-  // A higher-resolution binary "ink-shape" descriptor for matching individual
-  // glyphs (ranks / suits / digits). Built from a mask that was computed on an
-  // image WITH background (the whole region), sampled over the glyph's bounding
-  // box - crucial, because a tight glyph crop has no background to threshold.
+  // A higher-resolution GREYSCALE "ink-shape" descriptor for matching individual
+  // glyphs (ranks / suits / digits). Each cell holds the ink COVERAGE fraction
+  // (0..1), not a 1-bit on/off - the extra tonal detail is what lets it tell a
+  // heart from a diamond, or a 5 from a 6/8, at the tiny sizes an index shows.
+  // Built from a mask computed on the image WITH background (a tight glyph crop
+  // has no background to threshold).
   var GW = 24, GH = 36;
   function glyphVec(mask, w, x0, y0, x1, y1) {
     var bw = x1 - x0 + 1, bh = y1 - y0 + 1, vec = new Float32Array(GW * GH);
@@ -151,7 +154,7 @@
       var cy0 = y0 + ((ty * bh / GH) | 0), cy1 = Math.max(cy0 + 1, y0 + (((ty + 1) * bh / GH) | 0));
       var c = 0, n = 0;
       for (var y = cy0; y < cy1; y++) for (var x = cx0; x < cx1; x++) { c += mask[y * w + x]; n++; }
-      vec[ty * GW + tx] = (c / (n || 1)) > 0.28 ? 1 : 0;
+      vec[ty * GW + tx] = c / (n || 1);
     }
     return vec;
   }
@@ -178,7 +181,7 @@
   // reference through anti-aliasing, scaling and how the box was drawn. The ink
   // guard + "is a card present" check stop empty/felt regions matching anything.
   var rankThr = 0.50;
-  var suitThr = 0.40;
+  var suitThr = 0.62;
 
   function classify(sig) {
     // A face-up card is mostly a white body regardless of felt colour; if there
@@ -385,6 +388,34 @@
     var m = nearestKind(sig, kind, useColor);
     return (m && m.dist < (kind === "suit" ? sthr : gthr)) ? m.label : null;
   }
+  // Suit match anchored on COLOUR. Red vs black is a rock-solid signal, so we
+  // first decide the colour from the suit's red fraction, then pick the nearer
+  // of only the TWO suits of that colour by shape. This 2-way decision is far
+  // more robust for the tiny corner suit than a 4-way shape match with a tight
+  // threshold - which is what lets a mostly-hidden card read from its little
+  // index suit alone. Returns {label, dist, red}.
+  function nearestSuit(sig) {
+    var isRed = (sig.red || 0) > 0.14;
+    var minByLabel = {};                                  // best distance per suit label
+    function scan(list) {
+      for (var i = 0; i < list.length; i++) {
+        var t = list[i];
+        if (t.kind !== "suit") continue;
+        if (((t.red || 0) > 0.14) !== isRed) continue;   // only same-colour exemplars
+        var s = rms(t.vec, sig.vec);
+        if (!(t.label in minByLabel) || s < minByLabel[t.label]) minByLabel[t.label] = s;
+      }
+    }
+    scan(dbTemplates); scan(templates);
+    var labels = Object.keys(minByLabel);
+    if (!labels.length) return null;
+    labels.sort(function (a, b) { return minByLabel[a] - minByLabel[b]; });
+    var best = labels[0], bd = minByLabel[best];
+    var second = labels.length > 1 ? minByLabel[labels[1]] : Infinity;
+    // margin = how much better the winner is than the other same-colour suit;
+    // a tiny margin means heart/diamond (or spade/club) are too close to call.
+    return { label: best, dist: bd, red: isRed, margin: second - bd };
+  }
   // Any ink found strictly below a y line (used to locate a small/faint suit pip
   // that didn't clear the row-band threshold). Ignores stray single pixels.
   function rawInkBelow(mask, w, h, yStart) {
@@ -417,49 +448,74 @@
       Math.max(0, bb.x0 - mx), Math.max(0, bb.y0 - my),
       Math.min(img.width - 1, bb.x1 + mx), Math.min(img.height - 1, bb.y1 + my));
   }
-  // Split a card index image into its rank glyph (top) and suit glyph (below).
-  // A poker index is always rank-over-suit, so instead of fragile ink "bands"
-  // (which merge or shatter at small scale) we find the natural EMPTY ROW
-  // between the two - the row of minimum ink in the lower-middle of the ink
-  // block. If no such near-empty gap exists, the crop holds only the rank (suit
-  // cut off / not present) and we mark `cut` rather than inventing a suit.
+  // Contiguous horizontal ink bands (row runs with ink >= onThr).
+  function inkRowBands(mask, cw, ch, onThr) {
+    var bands = [], run = null;
+    for (var y = 0; y < ch; y++) {
+      var c = 0; for (var x = 0; x < cw; x++) c += mask[y * cw + x];
+      if (c >= onThr) { if (!run) run = { y0: y, y1: y }; else run.y1 = y; }
+      else if (run) { bands.push(run); run = null; }
+    }
+    if (run) bands.push(run);
+    return bands;
+  }
+  // Column clusters with ink in rows [y0,y1]; clusters separated by only a small
+  // gap (e.g. the "1" and "0" of a 10) are merged into one.
+  function colClusters(mask, cw, y0, y1) {
+    var on = new Array(cw), x, y;
+    for (x = 0; x < cw; x++) { on[x] = 0; for (y = y0; y <= y1; y++) if (mask[y * cw + x]) { on[x] = 1; break; } }
+    var runs = [], run = null;
+    for (x = 0; x < cw; x++) { if (on[x]) { if (!run) run = { x0: x, x1: x }; else run.x1 = x; } else if (run) { runs.push(run); run = null; } }
+    if (run) runs.push(run);
+    var gap = Math.max(2, Math.round((y1 - y0 + 1) * 0.45)), out = [];
+    runs.forEach(function (r) { var p = out[out.length - 1]; if (p && r.x0 - p.x1 - 1 <= gap) p.x1 = r.x1; else out.push({ x0: r.x0, x1: r.x1 }); });
+    return out;
+  }
+  // Split a card region into the NUMBER (top-left) and the small SUIT DIRECTLY
+  // UNDER IT. The suit is searched only in the number's own column, so the big
+  // central suit symbol (which is to the right) is ignored - this is what lets a
+  // card that's mostly hidden behind another still read from just its visible
+  // top-left index. If nothing sits under the number, the box is cut off (`cut`).
   function segmentCard(img) {
-    var cw = img.width, ch = img.height;
+    var cw = img.width, ch = img.height, y, x;
     var mask = inkMask(img, estimateBg(img));
-    var rows = new Array(ch), maxRow = 0, ytop = ch, ybot = -1, y, x;
-    for (y = 0; y < ch; y++) {
-      var c = 0; for (x = 0; x < cw; x++) c += mask[y * cw + x];
-      rows[y] = c; if (c > maxRow) maxRow = c;
-      if (c > 0) { if (y < ytop) ytop = y; if (y > ybot) ybot = y; }
-    }
-    if (ybot < 0 || maxRow === 0) return null;
-    var h = ybot - ytop + 1, gapThr = maxRow * 0.22;
-    var rankY0 = ytop, rankY1 = ybot, suitReg = null;
-    if (h >= 8) {
-      // Look for the emptiest row in the lower-middle - the rank/suit divider.
-      var lo = ytop + Math.max(1, Math.floor(h * 0.30));
-      var hi = ybot - Math.max(1, Math.floor(h * 0.12));
-      var splitY = -1, minInk = 1e9;
-      for (y = lo; y <= hi; y++) if (rows[y] < minInk) { minInk = rows[y]; splitY = y; }
-      if (splitY >= 0 && minInk <= gapThr) {
-        var rEnd = splitY; while (rEnd > rankY0 && rows[rEnd] <= gapThr) rEnd--;
-        var sStart = splitY; while (sStart < ybot && rows[sStart] <= gapThr) sStart++;
-        if (rEnd > rankY0 && sStart > rEnd && sStart <= ybot) { rankY1 = rEnd; suitReg = { y0: sStart, y1: ybot }; }
-      }
-    }
-    var rcb = colBounds(mask, cw, rankY0, rankY1);
+    var maxRow = 0;
+    for (y = 0; y < ch; y++) { var c = 0; for (x = 0; x < cw; x++) c += mask[y * cw + x]; if (c > maxRow) maxRow = c; }
+    if (maxRow === 0) return null;
+    var bands = inkRowBands(mask, cw, ch, Math.max(1, maxRow * 0.08));
+    if (!bands.length) return null;
+    var rankBand = bands[0];                                  // number sits in the top band
+    var clusters = colClusters(mask, cw, rankBand.y0, rankBand.y1);
+    if (!clusters.length) return null;
+    var num = clusters[0];                                    // leftmost cluster = the number
+    var nx0 = num.x0, nx1 = num.x1, nw = nx1 - nx0 + 1;
     var out = {
-      rankImg: cropRect(img, rcb.x0, rankY0, rcb.x1, rankY1),
-      rankSig: { vec: glyphVec(mask, cw, rcb.x0, rankY0, rcb.x1, rankY1), red: 0 },
+      rankImg: cropRect(img, nx0, rankBand.y0, nx1, rankBand.y1),
+      rankSig: { vec: glyphVec(mask, cw, nx0, rankBand.y0, nx1, rankBand.y1), red: 0 },
     };
-    if (suitReg) {
-      var scb = colBounds(mask, cw, suitReg.y0, suitReg.y1);
-      out.suitImg = cropRect(img, scb.x0, suitReg.y0, scb.x1, suitReg.y1);
-      out.suitSig = { vec: glyphVec(mask, cw, scb.x0, suitReg.y0, scb.x1, suitReg.y1), red: boxColor(img, scb.x0, suitReg.y0, scb.x1, suitReg.y1).red };
+    // Suit = the first ink DIRECTLY UNDER the number, found inside a NARROW
+    // column strip around the number's own columns. The big central suit symbol
+    // sits to the right of that strip, so it is excluded outright - which is what
+    // lets a card that's mostly hidden read from just its top-left index.
+    var stripLo = Math.max(0, Math.round(nx0 - nw * 0.2)), stripHi = Math.min(cw - 1, Math.round(nx1 + nw * 0.2));
+    var suit = null, syA = -1, syB = -1;
+    for (y = rankBand.y1 + 1; y < ch; y++) {
+      var rc = 0; for (x = stripLo; x <= stripHi; x++) if (mask[y * cw + x]) rc++;
+      if (rc >= 1) { if (syA < 0) syA = y; syB = y; }
+      else if (syA >= 0) break;                              // first gap after the small suit
+    }
+    if (syA >= 0 && syB - syA >= 1) {
+      var qx0 = stripHi, qx1 = stripLo;
+      for (y = syA; y <= syB; y++) for (x = stripLo; x <= stripHi; x++) if (mask[y * cw + x]) { if (x < qx0) qx0 = x; if (x > qx1) qx1 = x; }
+      if (qx1 >= qx0) suit = { x0: qx0, x1: qx1, y0: syA, y1: syB };
+    }
+    if (suit) {
+      out.suitImg = cropRect(img, suit.x0, suit.y0, suit.x1, suit.y1);
+      out.suitSig = { vec: glyphVec(mask, cw, suit.x0, suit.y0, suit.x1, suit.y1), red: boxColor(img, suit.x0, suit.y0, suit.x1, suit.y1).red };
     } else {
-      out.cut = true; // no gap found -> suit isn't in the crop
-      var sy0 = Math.min(ch - 1, rankY1 + 1);
-      out.suitImg = cropRect(img, 0, sy0, cw - 1, ch - 1);
+      out.cut = true; // nothing under the number -> suit isn't in the crop
+      var sy0c = Math.min(ch - 1, rankBand.y1 + 1);
+      out.suitImg = cropRect(img, 0, sy0c, cw - 1, ch - 1);
     }
     return out;
   }
@@ -479,7 +535,7 @@
     var seg = segmentCard(img);
     if (!seg) return null;
     var r = validInk(seg.rankSig) ? nearestKind(seg.rankSig, "rank", false) : null;
-    var s = (seg.suitSig && validInk(seg.suitSig)) ? nearestKind(seg.suitSig, "suit", true) : null;
+    var s = (seg.suitSig && validInk(seg.suitSig)) ? nearestSuit(seg.suitSig) : null;
     return { seg: seg, r: r, s: s };
   }
   // Recognise a card region against the built-in DB (+ user teaches). Tries both
@@ -503,7 +559,9 @@
     var best = null;
     cands.forEach(function (c) {
       if (!c || !c.r || !c.s) return;
-      if (c.r.dist < rankThr && c.s.dist < suitThr) {
+      // Require the suit's colour-mates to be distinguishable (margin): if a
+      // heart and a diamond are almost equally close, don't guess - ask instead.
+      if (c.r.dist < rankThr && c.s.dist < suitThr && (c.s.margin === undefined || c.s.margin >= 0.02)) {
         var tot = c.r.dist + c.s.dist;
         if (!best || tot < best.tot) best = { tot: tot, r: c.r, s: c.s };
       }
