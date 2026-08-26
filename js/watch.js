@@ -35,20 +35,25 @@
 
   // Card regions we calibrate, in table order.
   var REGION_KEYS = ["hero0", "hero1", "b0", "b1", "b2", "b3", "b4"];
-  // Numeric regions read by digit OCR.
-  var NUM_KEYS = ["pot", "mystack"];
+  // Numeric regions read by digit OCR: the pot, your stack, and the amount on
+  // your CALL button (the price to call - CHECK/no number means 0).
+  var NUM_KEYS = ["pot", "mystack", "tocall"];
+  // Each opponent's bet, shown in front of their seat. The highest is the
+  // current bet; it feeds the price to call when the button isn't boxed.
+  var BET_KEYS = ["bet0", "bet1", "bet2", "bet3", "bet4", "bet5"];
   // Seat "presence" regions - one spot per OPPONENT seat (up to 6, since you're
   // the 7th). Each reads as empty (the plus-sign), in the hand (a full-opacity
   // avatar) or folded (a faded, low-opacity avatar) - taught from real examples.
   var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4", "s5"];
   var MAX_SEATS = 6;          // opponent seats you can place
   var MAX_PLAYERS = 7;        // opponents + you
-  var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS, SEAT_KEYS);
+  var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS, SEAT_KEYS, BET_KEYS);
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
-    pot: "Pot (number)", mystack: "My stack (number)",
+    pot: "Pot (number)", mystack: "My stack (number)", tocall: "To call (button)",
     s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5", s5: "Seat 6",
+    bet0: "Seat 1 bet", bet1: "Seat 2 bet", bet2: "Seat 3 bet", bet3: "Seat 4 bet", bet4: "Seat 5 bet", bet5: "Seat 6 bet",
   };
 
   // ---------- Persistence ----------
@@ -748,7 +753,7 @@
         if (res.status === "unknown" && res.teach && !busy) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut });
       }
     });
-    // Numeric regions (pot / my stack) via digit OCR.
+    // Numeric regions (pot / my stack / to-call button) via digit OCR.
     NUM_KEYS.forEach(function (key) {
       var rect = regions[key];
       if (!rect) return;
@@ -757,14 +762,33 @@
       var st = stab[key];
       if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
       st.num = num;
-      if (st.count >= 2 && num.value != null) {
-        if (key === "pot") reading.pot = num.value;
-        else if (key === "mystack") reading.stack = num.value;
+      if (st.count >= 2) {
+        if (num.value != null) {
+          if (key === "pot") reading.pot = num.value;
+          else if (key === "mystack") reading.stack = num.value;
+          else if (key === "tocall") reading.toCall = num.value;
+        } else if (key === "tocall" && num.str === "") {
+          reading.toCall = 0;   // CHECK / no amount on the button = nothing to call
+        }
       }
-      if (st.count >= 2 && num.unknowns.length) {
+      if (st.count >= 2 && num.unknowns.length && key !== "tocall") {
         unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
     });
+    // Opponents' bets, boxed in front of each seat. The HIGHEST is the current
+    // bet; if the call button isn't boxed, that's the price to call.
+    var highBet = null;
+    BET_KEYS.forEach(function (key) {
+      var rect = regions[key];
+      if (!rect) return;
+      var num = readNumber(regionImageData(rect));
+      var val = "num:" + num.str;
+      var st = stab[key];
+      if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
+      st.num = num;
+      if (st.count >= 2 && num.value != null && (highBet == null || num.value > highBet)) highBet = num.value;
+    });
+    if (highBet != null && reading.toCall === undefined) reading.toCall = highBet; // no call button boxed -> highest bet
     // Seat state: over the first `seatCount` OPPONENT seats, each boxed seat is
     // classified empty / folded / in-hand against the looks you've taught. Only
     // in-hand opponents (+ you) count toward the odds. Runs once you've boxed at
@@ -894,7 +918,8 @@
       el.chips.appendChild(g);
     }
     chipGroup("Your cards & board", REGION_KEYS, "");
-    chipGroup("Numbers (optional)", NUM_KEYS, " num");
+    chipGroup("Pot / stack / call button (optional)", NUM_KEYS, " num");
+    chipGroup("Opponents' bets (optional)", BET_KEYS, " bet");
     chipGroup("Opponent seats (set the count below)", SEAT_KEYS, " wseat");
     modal.appendChild(el.chips);
 
@@ -954,6 +979,13 @@
       "and any neighbouring card are left out. The whole 52-card deck is recognised from the " +
       "built-in database — usually no teaching at all. Tip: zoom the poker window (Ctrl/Cmd +) so " +
       "cards are bigger — accuracy improves. Any misread card is one tap to fix on the table."));
+    modal.appendChild(h("p", "watch-note",
+      "Bets & your call: box the AMOUNT on your call button (\"To call\") — over just the number, e.g. " +
+      "the 100K in “CALL 100K”. When it shows a number that becomes the price to call and the advice " +
+      "updates; when the button is a plain CHECK (no number there) it reads as 0. You can also box " +
+      "each opponent's bet in front of their seat — the highest is the current bet, and it sets the " +
+      "price to call if you haven't boxed the button. The action banner then tells you FOLD / CHECK / " +
+      "CALL / RAISE and a size. (Digits are shared with the Pot/Stack, so teach a number once.)"));
     modal.appendChild(h("p", "watch-note",
       "Seats (opponents only — you're the last player): set Opponent seats to how many are at your " +
       "table, then box that many seat spots (the extra Seat chips are dimmed). Teach the three " +
@@ -1130,6 +1162,7 @@
       var rect = regions[key]; if (!rect) return;
       var col = key === selectedKey ? "#f5b93b"
         : SEAT_KEYS.indexOf(key) >= 0 ? "#a78bfa"
+        : BET_KEYS.indexOf(key) >= 0 ? "#f472b6"
         : NUM_KEYS.indexOf(key) >= 0 ? "#f5b93b"
         : key.indexOf("hero") === 0 ? "#4ade80" : "#60a5fa";
       ctx.strokeStyle = col; ctx.lineWidth = 2;
@@ -1252,15 +1285,29 @@
       el.strip.appendChild(chip);
       if (key === "hero1") el.strip.appendChild(h("span", "strip-sep", "|"));
     });
-    // Numeric readouts.
+    // Numeric readouts (pot / stack / call button).
+    var numLabel = { pot: "Pot ", mystack: "Stack ", tocall: "Call " };
     NUM_KEYS.forEach(function (key) {
       if (!regions[key]) return;
       var st = stab[key];
-      var txt = (st && st.num) ? (st.num.value != null ? st.num.value.toLocaleString() : st.num.str || "?") : "…";
-      var chip = h("span", "strip-num" + (st && st.num && st.num.value == null ? " q" : ""),
-        (key === "pot" ? "Pot " : "Stack ") + txt);
+      var txt = (st && st.num)
+        ? (st.num.value != null ? st.num.value.toLocaleString() : (key === "tocall" && st.num.str === "" ? "check" : st.num.str || "?"))
+        : "…";
+      var chip = h("span", "strip-num" + (st && st.num && st.num.value == null && !(key === "tocall" && st.num.str === "") ? " q" : ""),
+        numLabel[key] + txt);
       el.strip.appendChild(chip);
     });
+    // Opponents' bets, with the highest (the current bet) marked.
+    var betNums = [];
+    BET_KEYS.forEach(function (key) { if (regions[key]) { var st = stab[key]; betNums.push(st && st.num && st.num.value != null ? st.num.value : null); } });
+    if (betNums.length) {
+      var hi = betNums.reduce(function (m, v) { return v != null && (m == null || v > m) ? v : m; }, null);
+      betNums.forEach(function (v, i) {
+        var isHi = v != null && v === hi;
+        var chip = h("span", "strip-num bet" + (isHi ? " hi" : ""), "Bet " + (i + 1) + " " + (v != null ? v.toLocaleString() : "–"));
+        el.strip.appendChild(chip);
+      });
+    }
     // Seat readout — only the seats within the count. Click a chip to teach its
     // current look (empty / folded / in the hand).
     var anySeat = SEAT_KEYS.slice(0, seatCount).some(function (k) { return regions[k]; });

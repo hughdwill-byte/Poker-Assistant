@@ -153,6 +153,15 @@ different site/tab than the app itself and update the odds live.
 6. Mark the **dealer** with the **D** button on a seat and the advice shows your
    table position (button / blinds / cutoff …).
 
+**Your call & opponents' bets.** Box the **amount on your call button** (over
+just the number, e.g. the `100K` in "CALL 100K") — that becomes the price to
+call and the recommendation updates; a plain **CHECK** button (no number there)
+reads as 0. You can also box **each opponent's bet** in front of their seat — the
+**highest** is the current bet, and it sets the price to call if you haven't
+boxed the button. The action banner then tells you **FOLD / CHECK / CALL / RAISE**
+and a size. (Digits are shared with the Pot/Stack, so you only teach a number
+once.)
+
 **Players in & out (set the seat count, teach the looks).** Set **Opponent
 seats** to how many opponents are at your table (1–6; you're the last player),
 then box that many seat spots — the extra seat chips dim. Teach the three looks
