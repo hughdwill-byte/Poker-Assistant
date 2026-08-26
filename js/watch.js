@@ -536,16 +536,19 @@
       rankImg: cropRect(img, nx0, rankBand.y0, nx1, rankBand.y1),
       rankSig: { vec: glyphVec(mask, cw, nx0, rankBand.y0, nx1, rankBand.y1), red: 0 },
     };
-    // Suit = the first ink DIRECTLY UNDER the number, found inside a NARROW
-    // column strip around the number's own columns. The big central suit symbol
-    // sits to the right of that strip, so it is excluded outright - which is what
-    // lets a card that's mostly hidden read from just its top-left index.
+    // Suit = the ink DIRECTLY UNDER the number, inside a column strip around the
+    // number's own columns (the big central suit sits to the right of the strip,
+    // so it's excluded - which is what lets a hidden card read from its index).
+    // The strip is wide enough to hold the whole little suit, and we tolerate
+    // small internal gaps (a heart's top notch / narrow point, or anti-aliasing)
+    // so the WHOLE symbol is captured - not just its top half, which used to make
+    // a heart look like something else.
     var stripLo = Math.max(0, Math.round(nx0 - nw * 0.2)), stripHi = Math.min(cw - 1, Math.round(nx1 + nw * 0.2));
-    var suit = null, syA = -1, syB = -1;
+    var suit = null, syA = -1, syB = -1, gap = 0;
     for (y = rankBand.y1 + 1; y < ch; y++) {
       var rc = 0; for (x = stripLo; x <= stripHi; x++) if (mask[y * cw + x]) rc++;
-      if (rc >= 1) { if (syA < 0) syA = y; syB = y; }
-      else if (syA >= 0) break;                              // first gap after the small suit
+      if (rc >= 1) { if (syA < 0) syA = y; syB = y; gap = 0; }
+      else if (syA >= 0) { gap++; if (gap > Math.max(4, (syB - syA + 1) * 0.9)) break; } // real end, past the suit
     }
     if (syA >= 0 && syB - syA >= 1) {
       var qx0 = stripHi, qx1 = stripLo;
