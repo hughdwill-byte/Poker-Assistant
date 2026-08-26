@@ -448,11 +448,11 @@
   // icons never trigger a "verify this" prompt.
   //
   // opts.labelText (for an ACTION BUTTON like "CALL 100K" / "CHECK"): the box may
-  // also hold WORD text (CALL/CHECK/BET/RAISE/FOLD). Those letters are ignored -
-  // no "?", no teach prompt - so the amount still reads, and a button with no
-  // digits at all is recognised as a CHECK (hasDigit=false -> nothing to call).
-  // A single unknown glyph right after the number is offered for teaching, since
-  // that's where a K/M magnitude suffix sits.
+  // also hold WORD text (CALL/CHECK/BET/RAISE/FOLD). Glyphs are grouped into
+  // clusters by the wide space between the word and the amount; the AMOUNT
+  // cluster (the one with digits, else the rightmost) is read and its digits/
+  // suffix are offered for teaching, while other clusters (the word) are ignored.
+  // A button with no amount reads as a CHECK (hasDigit=false -> nothing to call).
   function readNumber(img, opts) {
     opts = opts || {};
     var w = img.width, h = img.height;
@@ -467,35 +467,44 @@
     var maxH = 1; metrics.forEach(function (m) { if (m.hgt > maxH) maxH = m.hgt; });
     var tallW = metrics.filter(function (m) { return m.hgt >= 0.55 * maxH; }).map(function (m) { return m.wid; }).sort(function (a, b) { return a - b; });
     var medW = tallW.length ? tallW[tallW.length >> 1] : 1;
-    // First pass: turn glyphs into an ordered token list (digit / separator / unknown).
+    // First pass: turn glyphs into an ordered token list (digit / separator /
+    // unknown), keeping each token's x-span so we can group them into clusters.
     var toks = [];
     for (var i = 0; i < metrics.length; i++) {
       var m = metrics[i];
       var col = boxColor(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1);
       if (col.colorful > 0.28) continue;                 // colourful chip icon -> ignore
-      if (m.hgt < 0.55 * maxH) { toks.push({ t: "sep" }); continue; } // comma / decimal
+      if (m.hgt < 0.55 * maxH) { toks.push({ t: "sep", x0: m.g.x0, x1: m.g.x1 }); continue; } // comma / decimal
       if (m.wid > 2.6 * medW) continue;                  // wide blob (icon) -> ignore
       var sig = { vec: glyphVec(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), red: col.red, holes: countHoles(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1) };
       var lab = classifyGlyph(sig);                      // digit 0-9, or taught K/M, else null
-      if (lab != null) toks.push({ t: "lab", lab: lab });
-      else toks.push({ t: "unk", sig: sig, img: cropRect(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1) });
+      if (lab != null) toks.push({ t: "lab", lab: lab, x0: m.g.x0, x1: m.g.x1 });
+      else toks.push({ t: "unk", sig: sig, img: cropRect(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), x0: m.g.x0, x1: m.g.x1 });
     }
-    // The last recognised DIGIT position - an unknown right after it is a suffix.
-    var lastDigit = -1;
-    for (var j = toks.length - 1; j >= 0; j--) { if (toks[j].t === "lab" && /[0-9]/.test(toks[j].lab)) { lastDigit = j; break; } }
+    // Which tokens form the NUMBER. For a plain numeric box that's all of them;
+    // for an action button we split into clusters on the word/number space and
+    // keep the amount cluster (with digits, else the rightmost), so the word is
+    // ignored but the amount's own glyphs can still be taught.
+    var numTokens = toks;
+    if (opts.labelText && toks.length) {
+      var spaceThr = Math.max(6, medW * 0.8), clusters = [], cur = null, prevX1 = null;
+      for (var c = 0; c < toks.length; c++) {
+        if (cur && toks[c].x0 - prevX1 > spaceThr) { clusters.push(cur); cur = null; }
+        if (!cur) cur = [];
+        cur.push(toks[c]); prevX1 = toks[c].x1;
+      }
+      if (cur) clusters.push(cur);
+      function hasDig(cl) { return cl.some(function (t) { return t.t === "lab" && /[0-9]/.test(t.lab); }); }
+      numTokens = null;
+      for (var d = 0; d < clusters.length; d++) { if (hasDig(clusters[d])) { numTokens = clusters[d]; break; } }
+      if (!numTokens) numTokens = clusters[clusters.length - 1] || [];
+    }
     var str = "", unknowns = [];
-    for (var k = 0; k < toks.length; k++) {
-      var tk = toks[k];
+    for (var k = 0; k < numTokens.length; k++) {
+      var tk = numTokens[k];
       if (tk.t === "sep") { str += "."; continue; }
       if (tk.t === "lab") { str += tk.lab; continue; }
-      // unknown glyph
       if (isIgnored(tk.sig, "digit")) continue;          // user skipped this shape
-      if (opts.labelText) {
-        // Only a lone glyph immediately after the number is a teachable suffix;
-        // every other unrecognised glyph is button word-text -> ignore silently.
-        if (lastDigit >= 0 && k === lastDigit + 1) unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
-        continue;
-      }
       str += "?"; unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
     }
     return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), unknowns: unknowns };
@@ -913,11 +922,13 @@
   var stab = {}; // key -> { val, count, sig }
   var teachSuppressed = {}; // key -> the reading value that was skipped/re-boxed
   var unknownStreak = {};   // key -> consecutive frames a card has read "unknown"
+  var votes = {};           // key -> { counts:{id:n}, total, topId } vote tally while unlatched
   // Keep re-reading a card this many frames before asking you to teach it - a
   // card is usually just missed on the first pass (mid-deal, a flip animation,
   // a moment of blur) and lands cleanly a frame or two later, so give the
   // recogniser several goes before surfacing the teach prompt.
   var UNKNOWN_GRACE = 6;
+  var VOTE_MAX = 8;         // commit the leading read once this many samples are in
   // Cards LATCH for the whole hand: once a spot reads (or you set) a card, it
   // holds that value until the community cards clear (a new hand). `manual` marks
   // the ones you set by hand. Seat labels are a similar sticky override.
@@ -962,7 +973,7 @@
     function allEmpty(keys) { return keys.length && keys.every(function (k) { var s = stab[k]; return s && s.count >= 2 && s.res.status === "empty"; }); }
     var newHand = anyLatched && (boardBoxed.length ? allEmpty(boardBoxed) : allEmpty(REGION_KEYS.filter(function (k) { return regions[k]; })));
     if (newHand) {
-      REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; delete unknownStreak[k]; emit(reading, k, null); });
+      REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; delete unknownStreak[k]; delete votes[k]; emit(reading, k, null); });
       // Fresh hand: forget who was dealt in and any manual seat labels, so seats
       // are read cards-first from this deal onward.
       seatHadCards = {}; seatOverride = {};
@@ -975,20 +986,33 @@
       var st = stab[key];
       if (!regions[key] || !st) return;
       if (manual[key] || latch[key] != null) { emit(reading, key, latch[key]); return; }
-      if (st.count >= 2) {
-        var res = st.res;
-        if (res.status === "card") { latch[key] = res.id; emit(reading, key, res.id); delete teachSuppressed[key]; delete unknownStreak[key]; }
-        else if (res.status === "empty") { emit(reading, key, null); delete teachSuppressed[key]; delete unknownStreak[key]; }
-        else if (res.status === "unknown" && res.teach) {
-          // Keep re-reading for a few frames first - a card is often just missed
-          // on the first pass and lands cleanly a frame later. Only once it has
-          // stayed unknown past the grace window do we surface the teach prompt.
+      var res = st.res;
+      if (res.status === "card") {
+        // VOTE across several frames and commit only a clear majority, so one
+        // wrong read on the first pass doesn't get latched. A clean card wins
+        // fast (unanimous); a flickery one keeps sampling until one card leads.
+        delete unknownStreak[key];
+        var v = votes[key] || (votes[key] = { counts: {}, total: 0, topId: null });
+        v.counts[res.id] = (v.counts[res.id] || 0) + 1; v.total++;
+        var topId = null, topN = 0, secondN = 0;
+        for (var vid in v.counts) { var vn = v.counts[vid]; if (vn > topN) { secondN = topN; topN = vn; topId = +vid; } else if (vn > secondN) secondN = vn; }
+        v.topId = topId;
+        if ((topN >= 3 && (topN - secondN >= 2 || topN >= 0.67 * v.total)) || v.total >= VOTE_MAX) {
+          latch[key] = topId; emit(reading, key, topId); delete teachSuppressed[key]; delete votes[key];
+        }
+      } else if (res.status === "empty") {
+        if (st.count >= 2) { emit(reading, key, null); delete teachSuppressed[key]; delete unknownStreak[key]; delete votes[key]; }
+      } else if (res.status === "unknown" && res.teach) {
+        // Keep re-reading for a few frames first - a card is often just missed on
+        // the first pass and lands cleanly a frame later. Only once it has stayed
+        // unknown past the grace window do we surface the teach prompt.
+        if (st.count >= 2) {
           unknownStreak[key] = (unknownStreak[key] || 0) + 1;
           var busy = teachSuppressed[key] !== undefined || (calibrating && (selectedKey === key || selectedKey === suitKey));
           if (!busy && unknownStreak[key] >= UNKNOWN_GRACE) {
             unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut, rank: res.rank });
           }
-        } else { delete unknownStreak[key]; }
+        }
       }
     });
     // Numeric regions (pot / my stack / to-call button) via digit OCR.
@@ -1226,8 +1250,21 @@
       refreshChips(); drawOverlay(); setStatus("Calibration cleared.");
     }));
     clear.appendChild(mkbtn("Forget taught cards", function () {
-      templates = []; ignored = []; saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
-      setStatus("Taught glyphs + skips cleared.");
+      // Cards/suits only - keep taught digits so numbers still read.
+      templates = templates.filter(function (t) { return t.kind === "digit"; });
+      ignored = ignored.filter(function (g) { return g.kind === "digit"; });
+      saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
+      for (var k in stab) delete stab[k];
+      setStatus("Taught cards + skips cleared (kept numbers).");
+    }));
+    clear.appendChild(mkbtn("Forget taught numbers", function () {
+      // Digits/K/M only - so you can re-teach a mis-taught digit (e.g. a 1 read
+      // as 3) without losing your taught cards.
+      templates = templates.filter(function (t) { return t.kind !== "digit"; });
+      ignored = ignored.filter(function (g) { return g.kind !== "digit"; });
+      saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
+      NUM_KEYS.concat(BET_KEYS).forEach(function (k) { delete stab[k]; });
+      setStatus("Taught numbers cleared — re-teach the digits (cards kept).");
     }));
     clear.appendChild(mkbtn("Clear seat labels", function () {
       seatOverride = {}; setStatus("Manual seat labels cleared — back to automatic.");
@@ -1243,11 +1280,13 @@
       "or suit reads wrong, tap the card in the strip to set it (that teaches it, and it stays until " +
       "the card changes). Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger."));
     modal.appendChild(h("p", "watch-note",
-      "Bets & your call: box your call button (\"To call\") — you can box the WHOLE button (the CALL/" +
-      "CHECK/BET word is ignored) or just the amount. When it shows an amount (e.g. CALL 100K) that " +
-      "becomes the price to call and the advice updates; when it's a plain CHECK / BET with no number, " +
-      "it reads as 0 (nothing to call) so you get a CHECK/BET recommendation. For a K/M amount, the " +
-      "first time you'll be asked to teach the K (or M) once. You can also box each opponent's bet in " +
+      "Bets & your call: box your call button (\"To call\") — box the WHOLE button (the CALL/RAISE word " +
+      "before the amount is ignored) or just the amount. The FIRST time, teach the amount's digits — " +
+      "when it shows e.g. CALL 100K you'll be asked for the 1, 0, 0 and the K once (shared with the " +
+      "Pot/Stack, so teach each digit once). That amount then becomes the price to call and the advice " +
+      "updates. A plain CHECK / BET with no number reads as 0 (nothing to call) so you get a CHECK/BET " +
+      "recommendation — if it asks about the CHECK/BET letters, hit Skip once. You can also box each " +
+      "opponent's bet in " +
       "front of their seat — the highest is the current bet, and it sets the price to call if you " +
       "haven't boxed the button. The action banner then tells you FOLD / CHECK / CALL / RAISE and a " +
       "size. (Digits are shared with the Pot/Stack, so teach a number once.)"));
@@ -1557,6 +1596,7 @@
     stab[key] = null;                      // re-read the new box from scratch
     delete teachSuppressed[key];           // a fresh box may now be readable
     delete unknownStreak[key];             // give the fresh box a full grace window
+    delete votes[key];                     // start voting over for the new box
     // Show the best-fit read for this box straight away (card regions).
     var guess = bestFitFor(key);
     setStatus(REGION_LABELS[key] + " traced." + (guess ? "  Best fit: " + guess : ""));
@@ -1591,6 +1631,11 @@
       else if (latch[key] != null) {
         chip.textContent = Poker.cardLabel(latch[key]); chip.classList.add(cardColor(latch[key]));
         if (manual[key]) chip.classList.add("manual");
+      }
+      // While still voting on a card, show the current leading guess (dimmed) so
+      // you can see what it's converging on, rather than the raw latest frame.
+      else if (votes[key] && votes[key].topId != null) {
+        chip.textContent = Poker.cardLabel(votes[key].topId); chip.classList.add(cardColor(votes[key].topId)); chip.classList.add("voting");
       }
       else if (!st || st.count < 2) { chip.textContent = "…"; }
       else if (st.res.status === "card") { chip.textContent = Poker.cardLabel(st.res.id); chip.classList.add(cardColor(st.res.id)); }
