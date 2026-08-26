@@ -153,13 +153,16 @@ different site/tab than the app itself and update the odds live.
 6. Mark the **dealer** with the **D** button on a seat and the advice shows your
    table position (button / blinds / cutoff …).
 
-**Players in & out (up to 7 seats).** Box the avatar spot on each seat, and with
-the seats showing their empty **plus-sign** press **Capture empty seats** to
-record the "empty" look. Each seat is then read as **empty (＋)**, **folded** (a
-faded, low-opacity avatar ◑) or **in the hand** (a full-opacity avatar ●). Only
-in-hand players count toward the odds — folded and empty seats drop out — and a
-**Folded vs in-hand** slider tunes how vivid an avatar must be to count as
-playing.
+**Players in & out (set the seat count, teach the looks).** Set **Opponent
+seats** to how many opponents are at your table (1–6; you're the last player),
+then box that many seat spots — the extra seat chips dim. Teach the three looks
+by clicking a seat in the live strip and saying whether it's **empty**,
+**folded** or **in the hand** (or use **All seats empty** between hands to record
+them all at once). Empty is matched by the **plus-sign** shape; folded vs in-hand
+is told apart by how **vivid/opaque** the avatar is, so it generalises across
+different player pictures. Each seat then shows **＋ empty**, **◑ folded** or
+**● in-hand**, and only in-hand opponents (+ you) count toward the odds. Changing
+the seat count also sets the table's player count immediately.
 
 **Matching against the card database.** A bundled database (`js/carddb.js`)
 holds the number and suit shapes of all 52 cards taken from the site's own card
