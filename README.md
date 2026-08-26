@@ -162,16 +162,22 @@ boxed the button. The action banner then tells you **FOLD / CHECK / CALL / RAISE
 and a size. (Digits are shared with the Pot/Stack, so you only teach a number
 once.)
 
-**Players in & out (set the seat count, teach the looks).** Set **Opponent
-seats** to how many opponents are at your table (1–6; you're the last player),
-then box that many seat spots — the extra seat chips dim. Teach the three looks
-by clicking a seat in the live strip and saying whether it's **empty**,
-**folded** or **in the hand** (or use **All seats empty** between hands to record
-them all at once). Empty is matched by the **plus-sign** shape; folded vs in-hand
-is told apart by how **vivid/opaque** the avatar is, so it generalises across
-different player pictures. Each seat then shows **＋ empty**, **◑ folded** or
-**● in-hand**, and only in-hand opponents (+ you) count toward the odds. Changing
-the seat count also sets the table's player count immediately.
+**Two boxes per card (most reliable).** Each card has an optional second box —
+its **· suit** box. Box the number in the card box and the suit in the suit box,
+and it reads each directly with no guessing about where the suit is. This is the
+steadiest mode, especially for a card that's partly hidden behind another. One
+box still works (it auto-splits the number and suit); the suit box is there when
+you want the extra certainty.
+
+**Players in & out (two seat boxes, colour rules).** Set **Opponent seats** to
+how many opponents are at your table (1–6; you're the last player). For each,
+box the **empty-spot** box (where the blue **＋** shows) and the **cards** box
+(where their two cards sit). Then: a **blue cross** = **empty**; the cards box
+showing **table felt (green)** = **folded** (cards mucked); **no felt** = **in
+the hand**. Two sliders tune the blue-cross and felt sensitivity. Click a seat in
+the strip to force a state (it sticks until that seat changes). Only in-hand
+opponents (+ you) count toward the odds, and the seat count sets the table size
+immediately.
 
 **Matching against the card database.** A bundled database (`js/carddb.js`)
 holds the number and suit shapes of all 52 cards taken from the site's own card

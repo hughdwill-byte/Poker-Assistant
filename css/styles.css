@@ -613,6 +613,8 @@ body {
 @keyframes watchpulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 .watch-chip.num.set { color: var(--accent); border-color: rgba(245,185,59,.5); }
 .watch-chip.bet.set { color: #f472b6; border-color: rgba(244,114,182,.5); }
+.watch-chip.suit.set { color: #22d3ee; border-color: rgba(34,211,238,.5); }
+.watch-chip.wseatc.set { color: #c084fc; border-color: rgba(192,132,252,.5); }
 .strip-num.bet { color: #f9a8d4; border-color: rgba(244,114,182,.35); }
 .strip-num.bet.hi { color: #fff; background: rgba(244,114,182,.25); border-color: #f472b6; font-weight: 800; }
 .strip-num {

@@ -35,6 +35,11 @@
 
   // Card regions we calibrate, in table order.
   var REGION_KEYS = ["hero0", "hero1", "b0", "b1", "b2", "b3", "b4"];
+  // Optional separate SUIT box per card (key = card key + "s"). When present, the
+  // card box is read as just the number and this box as just the suit - the most
+  // reliable mode, since nothing has to guess where the suit is.
+  var SUIT_KEYS = REGION_KEYS.map(function (k) { return k + "s"; });
+  function suitKeyOf(k) { return k + "s"; }
   // Numeric regions read by digit OCR: the pot, your stack, and the amount on
   // your CALL button (the price to call - CHECK/no number means 0).
   var NUM_KEYS = ["pot", "mystack", "tocall"];
@@ -44,23 +49,27 @@
   // Seat "presence" regions - one spot per OPPONENT seat (up to 6, since you're
   // the 7th). Each reads as empty (the plus-sign), in the hand (a full-opacity
   // avatar) or folded (a faded, low-opacity avatar) - taught from real examples.
-  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4", "s5"];
+  var SEAT_KEYS = ["s0", "s1", "s2", "s3", "s4", "s5"];        // the "empty spot" box (blue cross)
+  var SEATCARD_KEYS = SEAT_KEYS.map(function (k) { return k + "c"; }); // the player's cards box
+  function seatCardKeyOf(k) { return k + "c"; }
   var MAX_SEATS = 6;          // opponent seats you can place
   var MAX_PLAYERS = 7;        // opponents + you
-  var ALL_KEYS = REGION_KEYS.concat(NUM_KEYS, SEAT_KEYS, BET_KEYS);
+  var ALL_KEYS = REGION_KEYS.concat(SUIT_KEYS, NUM_KEYS, SEAT_KEYS, SEATCARD_KEYS, BET_KEYS);
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
     pot: "Pot (number)", mystack: "My stack (number)", tocall: "To call (button)",
-    s0: "Seat 1", s1: "Seat 2", s2: "Seat 3", s3: "Seat 4", s4: "Seat 5", s5: "Seat 6",
+    s0: "Seat 1 spot", s1: "Seat 2 spot", s2: "Seat 3 spot", s3: "Seat 4 spot", s4: "Seat 5 spot", s5: "Seat 6 spot",
+    s0c: "Seat 1 cards", s1c: "Seat 2 cards", s2c: "Seat 3 cards", s3c: "Seat 4 cards", s4c: "Seat 5 cards", s5c: "Seat 6 cards",
     bet0: "Seat 1 bet", bet1: "Seat 2 bet", bet2: "Seat 3 bet", bet3: "Seat 4 bet", bet4: "Seat 5 bet", bet5: "Seat 6 bet",
+    hero0s: "Your card 1 · suit", hero1s: "Your card 2 · suit",
+    b0s: "Flop 1 · suit", b1s: "Flop 2 · suit", b2s: "Flop 3 · suit", b3s: "Turn · suit", b4s: "River · suit",
   };
 
   // ---------- Persistence ----------
   var LS_REGIONS = "pokerwatch.regions.v1";
   var LS_TEMPLATES = "pokerwatch.templates.v2"; // v2: rank/suit/digit glyphs
   var LS_IGNORE = "pokerwatch.ignore.v1";
-  var LS_SEATSTATES = "pokerwatch.seatstates.v1"; // taught seat looks
   var LS_SEATCOUNT = "pokerwatch.seatcount.v1";   // how many opponent seats to watch
   function loadJSON(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -68,10 +77,6 @@
   var regions = loadJSON(LS_REGIONS, {});     // key -> {x,y,w,h} or {poly,x,y,w,h} normalised
   var templates = loadJSON(LS_TEMPLATES, []); // user-taught: [{kind, label, red, vec:[...]}]
   var ignored = loadJSON(LS_IGNORE, []);      // skipped glyph signatures (won't re-prompt)
-  // Taught seat looks: exemplars of each state. empty keeps a signature (the
-  // plus-sign is a fixed shape) + vibrancy; folded/active keep vibrancy (opacity)
-  // so they generalise across different player avatars.
-  var seatStates = loadJSON(LS_SEATSTATES, { empty: [], folded: [], active: [] });
   var seatCount = loadJSON(LS_SEATCOUNT, 5);  // opponents to watch (1..6)
 
   // Built-in card database (js/carddb.js): rank + suit glyph exemplars taken
@@ -162,25 +167,30 @@
     return n ? (sat / n) / 255 : 0;
   }
   var occThr = 0.55;                          // empty plus-sign template match distance
-  function seatMeanVib(list) { if (!list.length) return null; var s = 0; for (var i = 0; i < list.length; i++) s += list[i].vib; return s / list.length; }
-  // Classify a seat as 'empty' / 'folded' / 'active' against the looks you've
-  // taught. Empty is matched by the plus-sign SIGNATURE (a fixed shape); folded
-  // and in-hand are told apart by VIBRANCY (opacity), which generalises across
-  // different player avatars. Returns null while nothing has been taught yet.
-  function classifySeat(sig, vib) {
-    var e = seatStates.empty, f = seatStates.folded, a = seatStates.active;
-    if (e.length) {                                   // strong empty check by plus-sign shape
-      var best = Infinity;
-      for (var i = 0; i < e.length; i++) if (e[i].vec) { var dd = rms(e[i].vec, sig.vec); if (dd < best) best = dd; }
-      if (best < occThr) return "empty";
+  var blueThr = 0.03;                         // blue-cross fraction above which a spot is EMPTY
+  var greenThr = 0.12;                        // felt fraction in the cards box above which = FOLDED
+  // Colour make-up of a region: fraction of blue-cross pixels, green felt pixels,
+  // and red/white (card-back) pixels.
+  function colorFracs(img) {
+    var d = img.data, n = 0, blue = 0, green = 0, redwhite = 0;
+    for (var i = 0; i < d.length; i += 4) {
+      var r = d[i], g = d[i + 1], b = d[i + 2];
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b), lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (b - r > 22 && b - g > 10 && b > 80) blue++;                         // blue plus-sign
+      if (g - r > 22 && g - b > 12) green++;                                  // table felt
+      if ((r - g > 40 && r - b > 40 && r > 80) || (lum > 200 && mx - mn < 40)) redwhite++; // card back red / white
+      n++;
     }
-    var opts = [], eV = seatMeanVib(e), fV = seatMeanVib(f), aV = seatMeanVib(a);
-    if (eV != null) opts.push(["empty", Math.abs(vib - eV)]);
-    if (fV != null) opts.push(["folded", Math.abs(vib - fV)]);
-    if (aV != null) opts.push(["active", Math.abs(vib - aV)]);
-    if (!opts.length) return null;                    // untrained
-    opts.sort(function (x, y) { return x[1] - y[1]; });
-    return opts[0][0];
+    n = n || 1;
+    return { blue: blue / n, green: green / n, redwhite: redwhite / n };
+  }
+  // The seat's state from your two boxes, per your rules: a blue cross in the
+  // "spot" box means EMPTY; otherwise the "cards" box showing felt (green) means
+  // the cards are gone -> FOLDED, and no green (cards covering it) -> IN THE HAND.
+  function classifySeatColor(spotImg, cardsImg) {
+    if (spotImg && colorFracs(spotImg).blue > blueThr) return "empty";
+    if (cardsImg) return colorFracs(cardsImg).green > greenThr ? "folded" : "active";
+    return "active"; // no cards box -> assume a player is in
   }
 
   // A higher-resolution GREYSCALE "ink-shape" descriptor for matching individual
@@ -629,9 +639,51 @@
       return { status: "unknown", teach: "rank", img: seg.rankImg, sig: seg.rankSig };
     }
     if (seg.cut || !seg.suitSig || !validInk(seg.suitSig))   // rank known, suit missing/cut
-      return { status: "unknown", teach: "suit", cut: !!seg.cut, img: seg.suitImg, sig: seg.suitSig || EMPTY_SIG };
+      return { status: "unknown", teach: "suit", cut: !!seg.cut, img: seg.suitImg, sig: seg.suitSig || EMPTY_SIG, rank: tc.r.label };
     if (isIgnored(seg.suitSig, "suit")) return { status: "unknown" };
-    return { status: "unknown", teach: "suit", img: seg.suitImg, sig: seg.suitSig };
+    return { status: "unknown", teach: "suit", img: seg.suitImg, sig: seg.suitSig, rank: tc.r.label };
+  }
+
+  // Ink bounding box from a precomputed mask.
+  function inkBBoxMask(mask, w, h) {
+    var x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) if (mask[y * w + x]) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    return x1 < 0 ? null : { x0: x0, y0: y0, x1: x1, y1: y1 };
+  }
+  // Turn a box that contains a SINGLE glyph (a number box or a suit box) into a
+  // descriptor: trim to the ink, sample the shape, note the colour.
+  function boxGlyph(img) {
+    var norm = normalizeCard(img);
+    var mask = inkMask(norm, estimateBg(norm));
+    var bb = inkBBoxMask(mask, norm.width, norm.height);
+    if (!bb) return null;
+    return {
+      vec: glyphVec(mask, norm.width, bb.x0, bb.y0, bb.x1, bb.y1),
+      red: boxColor(norm, bb.x0, bb.y0, bb.x1, bb.y1).red,
+      img: cropRect(norm, bb.x0, bb.y0, bb.x1, bb.y1),
+    };
+  }
+  // Two-box recognition: read the NUMBER from one box and the SUIT from another.
+  // No segmentation guessing, so this is the most reliable mode. Returns the same
+  // shape as recognizeCard, plus `rank` on a suit prompt so a taught suit can
+  // complete the card immediately.
+  function recognizeSplit(numImg, suitImg) {
+    var pn = signature(numImg), ps = signature(suitImg);
+    if (!(pn.white > 0.08 || pn.red > 0.04 || ps.white > 0.08 || ps.red > 0.04)) return { status: "empty" };
+    var rg = boxGlyph(numImg), sg = boxGlyph(suitImg);
+    var rank = (rg && validInk(rg)) ? nearestKind(rg, "rank", false) : null;
+    var suit = (sg && validInk(sg)) ? nearestSuit(sg) : null;
+    if (rank && rank.dist < rankThr && suit && suit.dist < suitThr)
+      return { status: "card", id: Poker.makeId(RANK_VAL[rank.label], SUIT_CODE[suit.label]), label: rank.label + suit.label };
+    if (!(rank && rank.dist < rankThr)) {
+      if (!rg || !validInk(rg) || isIgnored(rg, "rank")) return { status: "unknown" };
+      return { status: "unknown", teach: "rank", img: rg.img, sig: rg };
+    }
+    if (!sg || !validInk(sg)) return { status: "unknown", teach: "suit", cut: true, img: suitImg, sig: EMPTY_SIG, rank: rank.label };
+    if (isIgnored(sg, "suit")) return { status: "unknown" };
+    return { status: "unknown", teach: "suit", img: sg.img, sig: sg, rank: rank.label };
   }
 
   function isIgnored(sig, kind) {
@@ -729,6 +781,14 @@
   // ---------- Watch loop ----------
   var stab = {}; // key -> { val, count, sig }
   var teachSuppressed = {}; // key -> the reading value that was skipped/re-boxed
+  // Manual answers you give (correcting a card, labelling a seat) are held as a
+  // sticky override so the live loop can't revert them. Each keeps a snapshot of
+  // how the spot looked; the override clears only when the spot changes (a new
+  // card is dealt / a player's state changes), then normal reading resumes.
+  var cardOverride = {}; // region key -> { id, sig:[...] }
+  var seatOverride = {}; // seat key   -> { state, sig:[...] }
+  var OVERRIDE_CHANGE = 0.85; // signature RMS beyond which a spot has "changed"
+  function sigChanged(a, bVec) { return rms(a, bVec) > OVERRIDE_CHANGE; }
   function tick() {
     if (!grabFrame()) return;
     var reading = { hero: [undefined, undefined], board: [undefined, undefined, undefined, undefined, undefined] };
@@ -737,7 +797,20 @@
       var rect = regions[key];
       if (!rect) return;
       var img = regionImageData(rect);
-      var res = recognizeCard(img);
+      var sigNow = signature(img).vec;
+      var suitKey = suitKeyOf(key);
+      // Two boxes (number + suit) when a suit box is set; otherwise auto-segment.
+      var res = regions[suitKey] ? recognizeSplit(img, regionImageData(regions[suitKey])) : recognizeCard(img);
+      // Sticky manual override: hold a card you set until the spot changes.
+      if (cardOverride[key]) {
+        if (res.status !== "empty" && !sigChanged(cardOverride[key].sig, sigNow)) {
+          setSlot(reading, key, cardOverride[key].id);
+          stab[key] = { val: "card:" + cardOverride[key].id, count: 2, cardImg: img,
+            res: { status: "card", id: cardOverride[key].id, label: Poker.cardLabel(cardOverride[key].id) } };
+          return;
+        }
+        delete cardOverride[key];   // the spot changed -> resume reading
+      }
       var val = res.status === "card" ? "card:" + res.label : res.status + (res.teach ? ":" + res.teach : "");
       var st = stab[key];
       if (st && st.val === val) st.count++;
@@ -751,9 +824,9 @@
         if (res.status === "card") { setSlot(reading, key, res.id); delete teachSuppressed[key]; }
         else if (res.status === "empty") { setSlot(reading, key, null); delete teachSuppressed[key]; }
         // 'unknown' -> leave the manual value alone; queue a glyph to teach, unless
-        // this region is being re-boxed right now or was just skipped.
-        var busy = teachSuppressed[key] !== undefined || (calibrating && selectedKey === key);
-        if (res.status === "unknown" && res.teach && !busy) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut });
+        // this region (or its suit box) is being re-boxed, or was just skipped.
+        var busy = teachSuppressed[key] !== undefined || (calibrating && (selectedKey === key || selectedKey === suitKey));
+        if (res.status === "unknown" && res.teach && !busy) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut, rank: res.rank });
       }
     });
     // Numeric regions (pot / my stack / to-call button) via digit OCR.
@@ -792,22 +865,29 @@
       if (st.count >= 2 && num.value != null && (highBet == null || num.value > highBet)) highBet = num.value;
     });
     if (highBet != null && reading.toCall === undefined) reading.toCall = highBet; // no call button boxed -> highest bet
-    // Seat state: over the first `seatCount` OPPONENT seats, each boxed seat is
-    // classified empty / folded / in-hand against the looks you've taught. Only
-    // in-hand opponents (+ you) count toward the odds. Runs once you've boxed at
-    // least one seat; the seat-count input alone sets the number directly.
-    if (SEAT_KEYS.some(function (k) { return regions[k]; })) {
+    // Seat state over the first `seatCount` OPPONENT seats. Each is read from its
+    // two boxes: a blue cross in the "spot" box = EMPTY; else the "cards" box with
+    // felt showing = FOLDED, no felt = IN THE HAND. A manual label sticks until
+    // the seat changes. Only in-hand opponents (+ you) count toward the odds.
+    var seatBoxed = false;
+    for (var sk = 0; sk < seatCount; sk++) { if (regions[SEAT_KEYS[sk]] || regions[SEATCARD_KEYS[sk]]) { seatBoxed = true; break; } }
+    if (seatBoxed) {
       var activeOpp = 0;
       for (var si = 0; si < seatCount; si++) {
-        var key = SEAT_KEYS[si];
-        if (!regions[key]) { activeOpp++; continue; }        // seat not boxed -> assume a player is there
-        var img = regionImageData(regions[key]);
-        var sig = signature(img), vib = regionVibrancy(img);
-        var state = classifySeat(sig, vib) || "active";       // untrained -> assume in
+        var key = SEAT_KEYS[si], ck = SEATCARD_KEYS[si];
+        if (!regions[key] && !regions[ck]) { activeOpp++; continue; } // seat not boxed -> assume in
+        var spotImg = regions[key] ? regionImageData(regions[key]) : null;
+        var cardsImg = regions[ck] ? regionImageData(regions[ck]) : null;
+        var refImg = cardsImg || spotImg;                    // used for change detection
+        var refSig = signature(refImg).vec;
+        var state;
+        var ov = seatOverride[key];
+        if (ov && !sigChanged(ov.sig, refSig)) state = ov.state;   // your label, held until it changes
+        else { if (ov) delete seatOverride[key]; state = classifySeatColor(spotImg, cardsImg); }
         var st = stab[key], val = "seat:" + state;
         if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
-        st.state = state; st.sig = sig; st.vib = vib;
-        var inHand = st.count >= 2 ? (state === "active") : true;  // assume active during warm-up
+        st.state = state; st.refSig = refSig;
+        var inHand = st.count >= 2 ? (state === "active") : true;   // assume active during warm-up
         if (inHand) activeOpp++;
       }
       var n = Math.max(2, Math.min(MAX_PLAYERS, activeOpp + 1)); // + you
@@ -920,10 +1000,12 @@
       g.appendChild(row);
       el.chips.appendChild(g);
     }
-    chipGroup("Your cards & board", REGION_KEYS, "");
+    chipGroup("Your cards & board — number box", REGION_KEYS, "");
+    chipGroup("Card suits (optional 2nd box — more reliable)", SUIT_KEYS, " suit");
     chipGroup("Pot / stack / call button (optional)", NUM_KEYS, " num");
     chipGroup("Opponents' bets (optional)", BET_KEYS, " bet");
-    chipGroup("Opponent seats (set the count below)", SEAT_KEYS, " wseat");
+    chipGroup("Seats — empty-spot box (blue cross)", SEAT_KEYS, " wseat");
+    chipGroup("Seats — cards box (felt = folded)", SEATCARD_KEYS, " wseatc");
     modal.appendChild(el.chips);
 
     // Live results strip. Click any card slot to correct/teach it by hand.
@@ -946,13 +1028,15 @@
     el.correct = h("div", "watch-teach watch-correct"); el.correct.hidden = true;
     modal.appendChild(el.correct);
 
-    // Seat setup row: how many opponent seats, and teaching the three looks.
+    // Seat setup row: seat count + the two detection thresholds.
     var seatRow = h("div", "watch-seatrow");
     seatRow.appendChild(labelWrap("Opponent seats", seatCountInput()));
-    seatRow.appendChild(mkbtn("All seats empty ↺", function () { teachAllSeats("empty"); }, "primary"));
+    seatRow.appendChild(labelWrap("Empty (blue cross)", blueSlider()));
+    seatRow.appendChild(labelWrap("Folded (felt)", greenSlider()));
     seatRow.appendChild(h("span", "watch-note seatnote",
-      "Box each opponent seat above, then teach the looks: click a seat in the strip below and say " +
-      "whether it's empty, folded or in the hand. Only in-hand players count toward the odds."));
+      "For each opponent box the empty-spot (where the blue cross shows) and the cards spot. A blue " +
+      "cross = empty; the cards box showing table felt = folded; no felt = in the hand. Click a seat " +
+      "in the strip to force a state. Only in-hand players count toward the odds."));
     modal.appendChild(seatRow);
 
     // Settings row
@@ -968,20 +1052,19 @@
       templates = []; ignored = []; saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
       setStatus("Taught glyphs + skips cleared.");
     }));
-    clear.appendChild(mkbtn("Forget seat looks", function () {
-      seatStates = { empty: [], folded: [], active: [] }; saveJSON(LS_SEATSTATES, seatStates);
-      setStatus("Taught seat looks cleared.");
+    clear.appendChild(mkbtn("Clear seat labels", function () {
+      seatOverride = {}; setStatus("Manual seat labels cleared — back to automatic.");
     }));
     settings.appendChild(clear);
     modal.appendChild(settings);
 
     modal.appendChild(h("p", "watch-note",
-      "One-time setup per site: pick a box below, then click around each of your two cards, the " +
-      "five board spots, and (optional) the Pot and My-stack numbers — one straight edge at a " +
-      "time, clicking the first point again to close. Trace just inside the card so the green felt " +
-      "and any neighbouring card are left out. The whole 52-card deck is recognised from the " +
-      "built-in database — usually no teaching at all. Tip: zoom the poker window (Ctrl/Cmd +) so " +
-      "cards are bigger — accuracy improves. Any misread card is one tap to fix on the table."));
+      "One-time setup per site: pick a box below, then click around each card / spot — one straight " +
+      "edge at a time, clicking the first point again to close. For a card that's tricky or hidden, " +
+      "use the SECOND box (its \"· suit\") to box the suit on its own: then the number box reads just " +
+      "the number and the suit box just the suit — the most reliable mode, no guessing. If a number " +
+      "or suit reads wrong, tap the card in the strip to set it (that teaches it, and it stays until " +
+      "the card changes). Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger."));
     modal.appendChild(h("p", "watch-note",
       "Bets & your call: box the AMOUNT on your call button (\"To call\") — over just the number, e.g. " +
       "the 100K in “CALL 100K”. When it shows a number that becomes the price to call and the advice " +
@@ -1047,6 +1130,18 @@
     s.addEventListener("input", function () { rankThr = +s.value / 100; suitThr = Math.round(rankThr * 80) / 100; });
     return s;
   }
+  function blueSlider() {
+    // Blue-cross fraction above which the spot box reads as EMPTY.
+    var s = document.createElement("input"); s.type = "range"; s.min = 1; s.max = 20; s.value = Math.round(blueThr * 100);
+    s.addEventListener("input", function () { blueThr = +s.value / 100; });
+    return s;
+  }
+  function greenSlider() {
+    // Felt (green) fraction in the cards box above which the seat reads as FOLDED.
+    var s = document.createElement("input"); s.type = "range"; s.min = 3; s.max = 40; s.value = Math.round(greenThr * 100);
+    s.addEventListener("input", function () { greenThr = +s.value / 100; });
+    return s;
+  }
   // Number of opponent seats to watch (1..6). Setting it also updates the table
   // player count straight away (opponents + you), so you can just type the size.
   function seatCountInput() {
@@ -1061,40 +1156,29 @@
     });
     return s;
   }
-  // Record the current look of a seat spot as an example of a state. Empty keeps
-  // a signature (the plus-sign shape); all keep vibrancy (opacity).
-  function teachSeat(key, state) {
-    if (!grabFrame()) { setStatus("Share a tab first."); return; }
-    if (!regions[key] || !seatStates[state]) return;
-    var img = regionImageData(regions[key]);
-    var entry = { vib: regionVibrancy(img) };
-    if (state === "empty") entry.vec = Array.prototype.slice.call(signature(img).vec);
-    seatStates[state].push(entry);
-    if (seatStates[state].length > 16) seatStates[state].shift();
-    saveJSON(LS_SEATSTATES, seatStates);
+  // Manually set a seat's state as a sticky override (held until that seat's
+  // cards/spot visibly change). The colour rules do the rest automatically.
+  function labelSeat(key, state) {
+    if (!grabFrame() || !SEAT_KEYS.indexOf) return;
+    var idx = SEAT_KEYS.indexOf(key); if (idx < 0) return;
+    var ref = regions[SEATCARD_KEYS[idx]] || regions[key];
+    var sig = ref ? Array.prototype.slice.call(signature(regionImageData(ref)).vec) : null;
+    seatOverride[key] = { state: state, sig: sig };
     stab[key] = null;
-    setStatus(REGION_LABELS[key] + " recorded as " + (state === "active" ? "in the hand" : state) + ".");
+    setStatus(REGION_LABELS[key].replace(" spot", "") + " set to " + (state === "active" ? "in the hand" : state) + " (held until it changes).");
   }
-  // Bulk-teach: record every boxed opponent seat as the same state (handy for
-  // "all seats empty" between hands).
-  function teachAllSeats(state) {
-    if (!grabFrame()) { setStatus("Share a tab first."); return; }
-    var n = 0;
-    for (var i = 0; i < seatCount; i++) { var k = SEAT_KEYS[i]; if (regions[k]) { teachSeat(k, state); n++; } }
-    setStatus(n ? ("Recorded " + n + " seat(s) as " + (state === "active" ? "in the hand" : state) + ".")
-                : "Box your opponent seats first.");
-  }
-  // Small popup to label a seat's current look (opened from the live strip).
+  // Small popup to set a seat's state (opened from the live strip).
   function openSeatMenu(key) {
     if (SEAT_KEYS.indexOf(key) < 0 || !el.correct) return;
     el.correct.innerHTML = "";
-    el.correct.appendChild(h("div", "teach-title", "What does " + REGION_LABELS[key] + " look like right now?"));
+    el.correct.appendChild(h("div", "teach-title", "Set " + REGION_LABELS[key].replace(" spot", "") + " to:"));
     var row = h("div", "teach-extra");
     [["active", "In the hand"], ["folded", "Folded"], ["empty", "Empty"]].forEach(function (s) {
-      row.appendChild(mkbtn(s[1], function () { teachSeat(key, s[0]); closeCorrect(); }));
+      row.appendChild(mkbtn(s[1], function () { labelSeat(key, s[0]); closeCorrect(); }));
     });
     el.correct.appendChild(row);
     var row2 = h("div", "teach-extra");
+    row2.appendChild(mkbtn("Auto (clear)", function () { delete seatOverride[key]; stab[key] = null; closeCorrect(); }));
     row2.appendChild(mkbtn("Cancel", closeCorrect));
     el.correct.appendChild(row2);
     el.correct.hidden = false;
@@ -1164,7 +1248,9 @@
     ALL_KEYS.forEach(function (key) {
       var rect = regions[key]; if (!rect) return;
       var col = key === selectedKey ? "#f5b93b"
+        : SUIT_KEYS.indexOf(key) >= 0 ? "#22d3ee"
         : SEAT_KEYS.indexOf(key) >= 0 ? "#a78bfa"
+        : SEATCARD_KEYS.indexOf(key) >= 0 ? "#c084fc"
         : BET_KEYS.indexOf(key) >= 0 ? "#f472b6"
         : NUM_KEYS.indexOf(key) >= 0 ? "#f5b93b"
         : key.indexOf("hero") === 0 ? "#4ade80" : "#60a5fa";
@@ -1311,23 +1397,21 @@
         el.strip.appendChild(chip);
       });
     }
-    // Seat readout — only the seats within the count. Click a chip to teach its
-    // current look (empty / folded / in the hand).
-    var anySeat = SEAT_KEYS.slice(0, seatCount).some(function (k) { return regions[k]; });
+    // Seat readout — only the seats within the count. Click a chip to force a
+    // state (empty / folded / in the hand); ◆ marks a manual label.
+    var anySeat = SEAT_KEYS.slice(0, seatCount).some(function (k, i) { return regions[k] || regions[SEATCARD_KEYS[i]]; });
     if (anySeat) {
       el.strip.appendChild(h("span", "strip-sep", "·"));
-      var trained = seatStates.empty.length || seatStates.folded.length || seatStates.active.length;
       SEAT_KEYS.slice(0, seatCount).forEach(function (key, idx) {
-        if (!regions[key]) return;
+        if (!regions[key] && !regions[SEATCARD_KEYS[idx]]) return;
         var st = stab[key];
         var state = st && st.state ? st.state : "active";
         var glyph = state === "active" ? "●" : state === "folded" ? "◑" : "＋";
-        var chip = h("span", "strip-seat clickable " + state, (idx + 1) + glyph);
+        var chip = h("span", "strip-seat clickable " + state, (idx + 1) + glyph + (seatOverride[key] ? "◆" : ""));
         chip.setAttribute("data-seat", key);
         chip.title = "Seat " + (idx + 1) + " — " +
           (state === "active" ? "in the hand" : state === "folded" ? "folded" : "empty") +
-          " · click to teach its look" + (trained ? "" : " (not taught yet)");
-        if (!trained) chip.classList.add("nobase");
+          (seatOverride[key] ? " (manual)" : "") + " · click to set";
         el.strip.appendChild(chip);
       });
     }
@@ -1351,9 +1435,10 @@
     if (id === renderedTeachId) return;
     renderedTeachId = id;
     teachKind = teaching.kind;   // the recogniser's guess; you can switch it
+    teachRank = teaching.rank || null; // known number, so a taught suit completes the card
     drawTeach();
   }
-  var teachKind = null;
+  var teachKind = null, teachRank = null;
   function drawTeach() {
     if (!teaching) return;
     el.teach.hidden = false;
@@ -1447,22 +1532,34 @@
   }
   // Correct a card region to a specific card AND teach its glyphs.
   function correctCard(key, rankLabel, suitLabel) {
-    var st = stab[key], learned = false;
-    if (st && st.cardImg) {
-      var g = extractGlyphs(st.cardImg);
-      if (g && g.rankSig) { templates.push({ label: rankLabel, kind: "rank", red: 0, vec: Array.prototype.slice.call(g.rankSig.vec) }); learned = true; }
-      if (g && g.suitSig) { templates.push({ label: suitLabel, kind: "suit", red: g.suitSig.red, vec: Array.prototype.slice.call(g.suitSig.vec) }); }
+    var learned = false;
+    if (grabFrame() && regions[key]) {
+      var suitK = suitKeyOf(key), rg, sg;
+      if (regions[suitK]) { rg = boxGlyph(regionImageData(regions[key])); sg = boxGlyph(regionImageData(regions[suitK])); }
+      else { var g = extractGlyphs(regionImageData(regions[key])); rg = g && g.rankSig; sg = g && g.suitSig; }
+      if (rg && rg.vec) { templates.push({ label: rankLabel, kind: "rank", red: 0, vec: Array.prototype.slice.call(rg.vec) }); learned = true; }
+      if (sg && sg.vec) { templates.push({ label: suitLabel, kind: "suit", red: sg.red || 0, vec: Array.prototype.slice.call(sg.vec) }); learned = true; }
       if (learned) saveJSON(LS_TEMPLATES, templates);
-      st.val = null;
     }
-    setCardValue(key, Poker.makeId(RANK_VAL[rankLabel], SUIT_CODE[suitLabel]));
-    setStatus("Set " + REGION_LABELS[key] + " = " + rankLabel + suitLabel + (learned ? " and learned it." : "."));
+    pinCard(key, Poker.makeId(RANK_VAL[rankLabel], SUIT_CODE[suitLabel]));
+    setStatus("Set " + REGION_LABELS[key] + " = " + rankLabel + suitLabel + (learned ? " and learned it — it will stay until the card changes." : "."));
+  }
+  // Set a card AND pin it as a sticky override so the live loop can't revert it,
+  // until the spot visibly changes (a new card is dealt there).
+  function pinCard(key, id) {
+    var sig = null;
+    if (grabFrame() && regions[key]) { try { sig = Array.prototype.slice.call(signature(regionImageData(regions[key])).vec); } catch (e) {} }
+    cardOverride[key] = { id: id, sig: sig };
+    delete teachSuppressed[key];
+    stab[key] = null;
+    setCardValue(key, id);
   }
   function setCardValue(key, idOrNull) {
     var reading = {};
     if (key === "hero0") reading.hero = [idOrNull, undefined];
     else if (key === "hero1") reading.hero = [undefined, idOrNull];
     else { reading.board = [undefined, undefined, undefined, undefined, undefined]; reading.board[+key.slice(1)] = idOrNull; }
+    if (idOrNull === null) delete cardOverride[key];
     API.applyReading(reading);
   }
   // Correction popup: set the true card for a region (also teaches it).
@@ -1488,12 +1585,22 @@
   function closeCorrect() { if (el.correct) el.correct.hidden = true; }
   function teachAs(label, kind) {
     if (!teaching) return;
+    var key = teaching.key;
     templates.push({ label: label, kind: kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
     saveJSON(LS_TEMPLATES, templates);
-    stab[teaching.key] = null; // force re-evaluate
     teaching = null; renderedTeachId = null;
     el.teach.hidden = true; el.teach.innerHTML = "";
-    setStatus("Learned it — recognised automatically from now on.");
+    if (kind === "suit" && teachRank) {
+      // Suit answered and the number is known -> complete the card and pin it, so
+      // it can't loop or revert (e.g. on the heart/diamond margin guard).
+      pinCard(key, Poker.makeId(RANK_VAL[teachRank], SUIT_CODE[label]));
+      setStatus("Set " + REGION_LABELS[key] + " = " + teachRank + label + " — it will stay until the card changes.");
+    } else {
+      // Taught one part; don't re-ask the SAME thing until the reading changes.
+      teachSuppressed[key] = stab[key] ? stab[key].val : "teach";
+      stab[key] = null;
+      setStatus("Learned it — recognised automatically from now on.");
+    }
   }
 
   // ---------- open / close ----------
@@ -1543,7 +1650,7 @@
     _extractGlyphs: extractGlyphs, _segmentCard: segmentCard, _nearest: nearestKind,
     _pointInPoly: pointInPoly, _maskOutsidePoly: maskOutsidePoly, _normalizeCard: normalizeCard,
     _vibrancy: regionVibrancy, _seatKeys: function () { return SEAT_KEYS.slice(); },
-    _classifySeat: classifySeat, _seatStates: function () { return seatStates; },
+    _classifySeatColor: classifySeatColor, _colorFracs: colorFracs, _recognizeSplit: recognizeSplit, _boxGlyph: boxGlyph,
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _dbCount: function () { return dbTemplates.length; },
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
