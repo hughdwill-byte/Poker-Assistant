@@ -695,6 +695,7 @@
 
   // ---------- Watch loop ----------
   var stab = {}; // key -> { val, count, sig }
+  var teachSuppressed = {}; // key -> the reading value that was skipped/re-boxed
   function tick() {
     if (!grabFrame()) return;
     var reading = { hero: [undefined, undefined], board: [undefined, undefined, undefined, undefined, undefined] };
@@ -710,11 +711,16 @@
       else stab[key] = st = { val: val, count: 1 };
       st.res = res;
       st.cardImg = img; // kept so a manual correction can teach from this frame
+      // A skip/re-box suppresses re-prompting for this region until what it sees
+      // actually changes (so the panel stops popping back over you every frame).
+      if (teachSuppressed[key] !== undefined && teachSuppressed[key] !== val) delete teachSuppressed[key];
       if (st.count >= 2) {
-        if (res.status === "card") setSlot(reading, key, res.id);
-        else if (res.status === "empty") setSlot(reading, key, null);
-        // 'unknown' -> leave the manual value alone; queue a glyph to teach
-        if (res.status === "unknown" && res.teach) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut });
+        if (res.status === "card") { setSlot(reading, key, res.id); delete teachSuppressed[key]; }
+        else if (res.status === "empty") { setSlot(reading, key, null); delete teachSuppressed[key]; }
+        // 'unknown' -> leave the manual value alone; queue a glyph to teach, unless
+        // this region is being re-boxed right now or was just skipped.
+        var busy = teachSuppressed[key] !== undefined || (calibrating && selectedKey === key);
+        if (res.status === "unknown" && res.teach && !busy) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut });
       }
     });
     // Numeric regions (pot / my stack) via digit OCR.
@@ -799,7 +805,19 @@
   // ---------- UI ----------
   var el = {}, calibrating = false, selectedKey = null, dragging = null;
   var polyPts = null, polyHover = null; // in-progress trace: points + cursor (canvas px)
-  var CLOSE_PX = 12;                    // click this close to the first point to close
+  var CLOSE_PX = 12;                    // max snap distance to the first point to close
+  // Snap radius (squared) for closing the trace onto its start point. It shrinks
+  // for small boxes - to at most ~35% of the shortest edge drawn so far - so the
+  // adjacent corners of a small area don't snap the box shut before you finish.
+  function closeR2() {
+    var base = CLOSE_PX;
+    if (polyPts && polyPts.length >= 2) {
+      var minEdge = Infinity;
+      for (var i = 1; i < polyPts.length; i++) { var d = Math.sqrt(dist2(polyPts[i], polyPts[i - 1])); if (d < minEdge) minEdge = d; }
+      base = Math.max(4, Math.min(CLOSE_PX, minEdge * 0.35));
+    }
+    return base * base;
+  }
 
   function h(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
@@ -1084,7 +1102,7 @@
       ctx.strokeStyle = "#f5b93b"; ctx.lineWidth = 2;
       ctx.beginPath();
       polyPts.forEach(function (pt, i) { if (i) ctx.lineTo(pt.x, pt.y); else ctx.moveTo(pt.x, pt.y); });
-      var nearStart = polyHover && polyPts.length >= 3 && dist2(polyHover, polyPts[0]) <= CLOSE_PX * CLOSE_PX;
+      var nearStart = polyHover && polyPts.length >= 3 && dist2(polyHover, polyPts[0]) <= closeR2();
       var end = nearStart ? polyPts[0] : polyHover;
       if (end) ctx.lineTo(end.x, end.y);
       ctx.stroke();
@@ -1112,7 +1130,7 @@
     c.addEventListener("click", function (e) {
       if (!calibrating || !selectedKey) { setStatus("Pick a box below first (Calibrate), then click its corners."); return; }
       var p = pos(e), pt = { x: p.x, y: p.y, W: p.W, H: p.H };
-      if (polyPts && polyPts.length >= 3 && dist2(pt, polyPts[0]) <= CLOSE_PX * CLOSE_PX) { finishPoly(); return; }
+      if (polyPts && polyPts.length >= 3 && dist2(pt, polyPts[0]) <= closeR2()) { finishPoly(); return; }
       if (!polyPts) polyPts = [];
       polyPts.push(pt);
       setStatus(polyPts.length < 3
@@ -1141,11 +1159,16 @@
     if (x1 - x0 < 0.01 || y1 - y0 < 0.01) { setStatus("That box was too small — try again."); return; }
     regions[key] = { x: x0, y: y0, w: x1 - x0, h: y1 - y0, poly: poly };
     saveJSON(LS_REGIONS, regions);
+    stab[key] = null;                      // re-read the new box from scratch
+    delete teachSuppressed[key];           // a fresh box may now be readable
     // Show the best-fit read for this box straight away (card regions).
     var guess = bestFitFor(key);
     setStatus(REGION_LABELS[key] + " traced." + (guess ? "  Best fit: " + guess : ""));
+    // Advance to the next unset region; if all are set, leave calibration so the
+    // re-boxed region can be read/prompted again instead of staying suppressed.
     var next = ALL_KEYS.filter(function (k) { return !regions[k]; })[0];
-    selectedKey = next || key;
+    if (next) { selectedKey = next; }
+    else { selectedKey = null; calibrating = false; updateButtons(); }
     refreshChips(); drawOverlay();
   }
   // Grab the current frame and report the best database fit for a just-traced
@@ -1290,14 +1313,19 @@
       var key = teaching.key;
       teaching = null; renderedTeachId = null; el.teach.hidden = true; el.teach.innerHTML = "";
       stab[key] = null;
-      selectedKey = key; calibrating = true; refreshChips();
+      teachSuppressed[key] = "rebox";        // don't re-prompt mid-trace
+      cancelPoly(); selectedKey = key; calibrating = true; refreshChips();
       setStatus("Re-tracing " + REGION_LABELS[key] + " — click its corners (zoom the poker window for a bigger target).");
       drawOverlay();
     }));
     extra.appendChild(mkbtn("Skip (ignore this)", function () {
+      var key = teaching.key;
       ignored.push({ kind: teaching.kind, red: teaching.sig.red, vec: Array.prototype.slice.call(teaching.sig.vec) });
       saveJSON(LS_IGNORE, ignored);
+      // Stop re-prompting for this region until what it shows changes.
+      teachSuppressed[key] = stab[key] ? stab[key].val : "skip";
       teaching = null; renderedTeachId = null; el.teach.hidden = true; el.teach.innerHTML = "";
+      setStatus(REGION_LABELS[key] + " skipped — it won't ask again until that card changes.");
     }));
     el.teach.appendChild(extra);
   }
