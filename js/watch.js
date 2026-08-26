@@ -202,24 +202,39 @@
     return hit / (n || 1);
   }
   // The seat's state from your two boxes. EMPTY-vs-SEATED is told apart the same
-  // colour way FOLDED is: an empty seat's "spot" box shows the plain background
-  // (felt + the ＋ cross), whereas a seated player's avatar/logo covers it. So a
-  // spot box that's mostly the captured EMPTY colour = EMPTY; when the avatar
-  // covers it that fraction drops -> SEATED. Then, for a seated player, the
-  // "cards" box being mostly FELT means the cards are gone -> FOLDED, and cards
-  // covering it -> IN THE HAND. Both use the colours you captured when available.
-  function classifySeatColor(spotImg, cardsImg) {
-    if (spotImg) {
-      var emptyRef = seatRef.emptyRGB || seatRef.feltRGB;      // empty spot ~ felt colour
-      if (emptyRef) { if (colorFrac(spotImg, emptyRef, 48) > emptyThr) return "empty"; }
-      else if (seatRef.emptySig && rms(seatRef.emptySig, signature(spotImg).vec) < 0.6) return "empty";
-      else if (colorFracs(spotImg).blue > blueThr) return "empty";
+  // CARDS-FIRST seat reading. A seat is IN THE HAND when cards are showing in its
+  // "cards" box; the box being mostly FELT means no cards there. We track, per
+  // hand, whether a seat was ever dealt cards: if it had cards and they later
+  // vanish (before the community cards clear) that's a FOLD; a seat that was
+  // never dealt in this hand is EMPTY - and only then do we look at the spot box
+  // for the ＋ cross to confirm empty vs. a player sitting out.
+  function seatHasCards(cardsImg) {
+    if (!cardsImg) return null;                              // no cards box -> can't tell
+    var feltFrac = seatRef.feltRGB ? colorFrac(cardsImg, seatRef.feltRGB, 48) : colorFracs(cardsImg).green;
+    return feltFrac <= greenThr;                            // not mostly felt => cards present
+  }
+  // Does the spot box look like the empty ＋ cross (plain background) rather than
+  // a seated player's avatar? Used only to confirm an empty seat.
+  function spotIsEmpty(spotImg) {
+    if (!spotImg) return null;
+    var emptyRef = seatRef.emptyRGB || seatRef.feltRGB;
+    if (emptyRef) return colorFrac(spotImg, emptyRef, 48) > emptyThr;
+    if (seatRef.emptySig) return rms(seatRef.emptySig, signature(spotImg).vec) < 0.6;
+    return colorFracs(spotImg).blue > blueThr;
+  }
+  // Resolve a seat to "active" | "folded" | "empty" given its two boxes and
+  // whether it had already been dealt cards earlier this hand.
+  function classifySeat(spotImg, cardsImg, hadCards) {
+    var has = seatHasCards(cardsImg);
+    if (has === true) return "active";                      // cards in front -> playing
+    if (has === false) {
+      if (hadCards) return "folded";                        // had cards, now gone -> folded
+      // No cards, and none dealt this hand -> look at the cross to confirm empty.
+      var empty = spotIsEmpty(spotImg);
+      return empty === false ? "folded" : "empty";          // avatar but no cards -> sitting out
     }
-    if (cardsImg) {
-      var feltFrac = seatRef.feltRGB ? colorFrac(cardsImg, seatRef.feltRGB, 48) : colorFracs(cardsImg).green;
-      return feltFrac > greenThr ? "folded" : "active";
-    }
-    return "active"; // no cards box -> assume a player is in
+    // No cards box boxed: fall back to the spot cross alone.
+    return spotIsEmpty(spotImg) === true ? "empty" : "active";
   }
 
   // A higher-resolution GREYSCALE "ink-shape" descriptor for matching individual
@@ -876,6 +891,7 @@
   var latch = {};        // region key -> card id held for this hand
   var manual = {};       // region key -> true if you set it by hand
   var emitted = {};      // region key -> last value pushed to the main page
+  var seatHadCards = {}; // seat key   -> true once dealt cards this hand (for fold detection)
   var seatOverride = {}; // seat key   -> { state, sig:[...] }
   var OVERRIDE_CHANGE = 0.85; // signature RMS beyond which a seat spot has "changed"
   function sigChanged(a, bVec) { return rms(a, bVec) > OVERRIDE_CHANGE; }
@@ -914,6 +930,9 @@
     var newHand = anyLatched && (boardBoxed.length ? allEmpty(boardBoxed) : allEmpty(REGION_KEYS.filter(function (k) { return regions[k]; })));
     if (newHand) {
       REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; emit(reading, k, null); });
+      // Fresh hand: forget who was dealt in and any manual seat labels, so seats
+      // are read cards-first from this deal onward.
+      seatHadCards = {}; seatOverride = {};
     }
     // Pass 2: emit each card. A latched or manually-set card HOLDS its value for
     // the whole hand (it won't flicker or revert); an unlatched spot latches the
@@ -970,10 +989,11 @@
       if (st.count >= 2 && num.value != null && (highBet == null || num.value > highBet)) highBet = num.value;
     });
     if (highBet != null && reading.toCall === undefined) reading.toCall = highBet; // no call button boxed -> highest bet
-    // Seat state over the first `seatCount` OPPONENT seats. Each is read from its
-    // two boxes: a blue cross in the "spot" box = EMPTY; else the "cards" box with
-    // felt showing = FOLDED, no felt = IN THE HAND. A manual label sticks until
-    // the seat changes. Only in-hand opponents (+ you) count toward the odds.
+    // Seat state over the first `seatCount` OPPONENT seats, read CARDS-FIRST:
+    // cards in the "cards" box = IN THE HAND; cards that were dealt and then
+    // vanish (before the board clears) = FOLDED; a seat never dealt in this hand
+    // = EMPTY (confirmed by the ＋ cross in the spot box). A manual label sticks
+    // until the seat changes. Only in-hand opponents (+ you) count toward the odds.
     var seatBoxed = false;
     for (var sk = 0; sk < seatCount; sk++) { if (regions[SEAT_KEYS[sk]] || regions[SEATCARD_KEYS[sk]]) { seatBoxed = true; break; } }
     if (seatBoxed) {
@@ -988,7 +1008,11 @@
         var state;
         var ov = seatOverride[key];
         if (ov && !sigChanged(ov.sig, refSig)) state = ov.state;   // your label, held until it changes
-        else { if (ov) delete seatOverride[key]; state = classifySeatColor(spotImg, cardsImg); }
+        else {
+          if (ov) delete seatOverride[key];
+          state = classifySeat(spotImg, cardsImg, seatHadCards[key]);
+          if (state === "active") seatHadCards[key] = true;    // remember they were dealt in this hand
+        }
         var st = stab[key], val = "seat:" + state;
         if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
         st.state = state; st.refSig = refSig;
@@ -1109,8 +1133,8 @@
     chipGroup("Card suits (optional 2nd box — more reliable)", SUIT_KEYS, " suit");
     chipGroup("Pot / stack / call button (optional)", NUM_KEYS, " num");
     chipGroup("Opponents' bets (optional)", BET_KEYS, " bet");
-    chipGroup("Seats — empty-spot box (blue cross)", SEAT_KEYS, " wseat");
-    chipGroup("Seats — cards box (felt = folded)", SEATCARD_KEYS, " wseatc");
+    chipGroup("Seats — cards box (cards = in the hand)", SEATCARD_KEYS, " wseatc");
+    chipGroup("Seats — spot box (＋ cross confirms empty)", SEAT_KEYS, " wseat");
     modal.appendChild(el.chips);
 
     // Live results strip. Click any card slot to correct/teach it by hand.
@@ -1145,12 +1169,12 @@
     seatRow.appendChild(labelWrap("Folded (felt)", greenSlider()));
     seatRow.appendChild(labelWrap("Empty (spot)", blueSlider()));
     seatRow.appendChild(h("span", "watch-note seatnote",
-      "For each opponent box the empty-spot (where the ＋ cross shows) and the cards spot. Then, with " +
-      "your cards-box showing the plain TABLE FELT (a folded/empty seat), press Capture felt colour so " +
-      "it learns your exact felt — a cards box that's mostly that felt = folded, cards over it = in " +
-      "the hand. With the seats empty, press Capture empty spots so it learns the empty-spot colour — " +
-      "a spot mostly that colour = empty, a player's avatar over it = seated. Click a seat in the " +
-      "strip to force a state. Only in-hand players count toward the odds."));
+      "For each opponent box where their CARDS sit, and (optional) the spot where the ＋ cross shows. " +
+      "Cards are read first: cards in front = in the hand; if they were dealt and their cards then " +
+      "vanish before the board clears = folded; a seat dealt no cards this hand = empty. Press Capture " +
+      "felt colour with a cards box showing plain TABLE FELT so it knows \"no cards\", and Capture " +
+      "empty spots (seats empty) so the ＋ cross confirms empty. Click a seat in the strip to force a " +
+      "state. Only in-hand players count toward the odds."));
     modal.appendChild(seatRow);
 
     // Settings row
@@ -1190,13 +1214,12 @@
       "size. (Digits are shared with the Pot/Stack, so teach a number once.)"));
     modal.appendChild(h("p", "watch-note",
       "Seats (opponents only — you're the last player): set Opponent seats to how many are at your " +
-      "table, then box that many seat spots (the extra Seat chips are dimmed). Teach the three " +
-      "looks by clicking a seat in the strip and saying whether it's empty, folded or in the hand — " +
-      "or use \"All seats empty\" between hands to record them all at once. Empty vs seated is told " +
-      "apart by colour (an empty spot shows the plain felt/＋ colour, a seated player's avatar covers " +
-      "it); folded vs in-hand the same way on the cards box, so it works across different player " +
-      "pictures. Each seat then shows ＋ empty, ◑ folded or ● in-hand, " +
-      "and only in-hand opponents (+ you) count toward the odds. Mark your own seat with ⌂."));
+      "table, then box that many seat CARDS boxes (the extra Seat chips are dimmed). It reads seats " +
+      "cards-first: whoever has cards in front at the start of the hand is in it; if a player's cards " +
+      "disappear before the community cards do, they've folded; a seat that gets no cards this hand is " +
+      "empty (the ＋ cross confirms it). Each seat shows ＋ empty, ◑ folded or ● in-hand, and only " +
+      "in-hand opponents (+ you) count toward the odds. Click a seat to override a state for the hand; " +
+      "mark your own seat with ⌂."));
 
     el.overlay = overlay;
     document.body.appendChild(overlay);
@@ -1814,7 +1837,7 @@
     _extractGlyphs: extractGlyphs, _segmentCard: segmentCard, _nearest: nearestKind,
     _pointInPoly: pointInPoly, _maskOutsidePoly: maskOutsidePoly, _normalizeCard: normalizeCard,
     _vibrancy: regionVibrancy, _seatKeys: function () { return SEAT_KEYS.slice(); },
-    _classifySeatColor: classifySeatColor, _colorFracs: colorFracs, _recognizeSplit: recognizeSplit, _boxGlyph: boxGlyph,
+    _classifySeat: classifySeat, _seatHasCards: seatHasCards, _colorFracs: colorFracs, _recognizeSplit: recognizeSplit, _boxGlyph: boxGlyph,
     _seatRef: function () { return seatRef; },
     _regions: function () { return regions; }, _templates: function () { return templates; },
     _dbCount: function () { return dbTemplates.length; },
