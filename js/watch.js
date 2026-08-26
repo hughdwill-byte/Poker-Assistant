@@ -932,6 +932,7 @@
   var stab = {}; // key -> { val, count, sig }
   var teachSuppressed = {}; // key -> the reading value that was skipped/re-boxed
   var unknownStreak = {};   // key -> consecutive frames a card has read "unknown"
+  var numUnkStreak = {};    // numeric key -> consecutive frames it showed unknown digits
   var votes = {};           // key -> { counts:{id:n}, total, topId } vote tally while unlatched
   // Keep re-reading a card this many frames before asking you to teach it - a
   // card is usually just missed on the first pass (mid-deal, a flip animation,
@@ -1063,7 +1064,13 @@
         }
       }
       // Prompt to teach any unknown digit (pot / stack / call button share digits).
-      if (st.count >= 2 && num.unknowns.length) {
+      // Use a persistence streak, NOT exact-string stability: the call button's
+      // segmentation wobbles frame to frame (different count of "?"), which kept
+      // resetting st.count so the prompt never appeared. Instead, once a box has
+      // shown unknown digits for a couple of frames, surface the leftmost one.
+      if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
+      else delete numUnkStreak[key];
+      if ((numUnkStreak[key] || 0) >= 2) {
         unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
       }
     });
