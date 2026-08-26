@@ -526,6 +526,7 @@ body {
 .strip-card.red { color: var(--card-red); }
 .strip-card.off { background: transparent; color: var(--muted); border: 1px dashed var(--line); font-weight: 600; }
 .strip-card.q { background: #3a2e12; color: var(--accent); border-color: var(--accent); }
+.strip-card.manual { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }
 .strip-sep { color: var(--muted); margin: 0 2px; }
 
 .watch-teach { background: var(--panel-2); border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin-bottom: 12px; }

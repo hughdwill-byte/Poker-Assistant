@@ -400,11 +400,19 @@
     var val = (mult > 1 && seps === 1) ? parseFloat(s) : parseInt(digits, 10);
     return isFinite(val) ? Math.round(val * mult) : null;
   }
-  // Read a numeric region -> { str, value, unknowns:[{img,sig,kind}] }
+  // Read a numeric region -> { str, value, hasDigit, unknowns:[{img,sig,kind}] }
   // Robust to chip icons / commas / noise: we keep only digit-shaped glyphs
   // (tall enough, not too wide, not colourful) and drop the rest, so commas and
   // icons never trigger a "verify this" prompt.
-  function readNumber(img) {
+  //
+  // opts.labelText (for an ACTION BUTTON like "CALL 100K" / "CHECK"): the box may
+  // also hold WORD text (CALL/CHECK/BET/RAISE/FOLD). Those letters are ignored -
+  // no "?", no teach prompt - so the amount still reads, and a button with no
+  // digits at all is recognised as a CHECK (hasDigit=false -> nothing to call).
+  // A single unknown glyph right after the number is offered for teaching, since
+  // that's where a K/M magnitude suffix sits.
+  function readNumber(img, opts) {
+    opts = opts || {};
     var w = img.width, h = img.height;
     var bg = estimateBg(img);
     var mask = inkMask(img, bg);
@@ -417,21 +425,38 @@
     var maxH = 1; metrics.forEach(function (m) { if (m.hgt > maxH) maxH = m.hgt; });
     var tallW = metrics.filter(function (m) { return m.hgt >= 0.55 * maxH; }).map(function (m) { return m.wid; }).sort(function (a, b) { return a - b; });
     var medW = tallW.length ? tallW[tallW.length >> 1] : 1;
-    var str = "", unknowns = [];
+    // First pass: turn glyphs into an ordered token list (digit / separator / unknown).
+    var toks = [];
     for (var i = 0; i < metrics.length; i++) {
       var m = metrics[i];
       var col = boxColor(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1);
       if (col.colorful > 0.28) continue;                 // colourful chip icon -> ignore
-      if (m.hgt < 0.55 * maxH) { str += "."; continue; } // short = comma/decimal separator
+      if (m.hgt < 0.55 * maxH) { toks.push({ t: "sep" }); continue; } // comma / decimal
       if (m.wid > 2.6 * medW) continue;                  // wide blob (icon) -> ignore
       var sig = { vec: glyphVec(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), red: col.red, holes: countHoles(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1) };
-      var lab = classifyGlyph(sig);
-      if (lab == null) {
-        if (isIgnored(sig, "digit")) continue;           // user skipped this shape
-        str += "?"; unknowns.push({ img: cropRect(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), sig: sig, kind: "digit" });
-      } else str += lab;
+      var lab = classifyGlyph(sig);                      // digit 0-9, or taught K/M, else null
+      if (lab != null) toks.push({ t: "lab", lab: lab });
+      else toks.push({ t: "unk", sig: sig, img: cropRect(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1) });
     }
-    return { str: str, value: parseNumber(str), unknowns: unknowns };
+    // The last recognised DIGIT position - an unknown right after it is a suffix.
+    var lastDigit = -1;
+    for (var j = toks.length - 1; j >= 0; j--) { if (toks[j].t === "lab" && /[0-9]/.test(toks[j].lab)) { lastDigit = j; break; } }
+    var str = "", unknowns = [];
+    for (var k = 0; k < toks.length; k++) {
+      var tk = toks[k];
+      if (tk.t === "sep") { str += "."; continue; }
+      if (tk.t === "lab") { str += tk.lab; continue; }
+      // unknown glyph
+      if (isIgnored(tk.sig, "digit")) continue;          // user skipped this shape
+      if (opts.labelText) {
+        // Only a lone glyph immediately after the number is a teachable suffix;
+        // every other unrecognised glyph is button word-text -> ignore silently.
+        if (lastDigit >= 0 && k === lastDigit + 1) unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
+        continue;
+      }
+      str += "?"; unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
+    }
+    return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), unknowns: unknowns };
   }
 
   // ---------- Corner-based card recognition (rank + suit separately) ----------
@@ -850,9 +875,18 @@
   // the ones you set by hand. Seat labels are a similar sticky override.
   var latch = {};        // region key -> card id held for this hand
   var manual = {};       // region key -> true if you set it by hand
+  var emitted = {};      // region key -> last value pushed to the main page
   var seatOverride = {}; // seat key   -> { state, sig:[...] }
   var OVERRIDE_CHANGE = 0.85; // signature RMS beyond which a seat spot has "changed"
   function sigChanged(a, bVec) { return rms(a, bVec) > OVERRIDE_CHANGE; }
+  // Push a card only when the watch's value for the slot CHANGES. Leaving it
+  // undefined (not emitted) means applyReading won't touch that slot - so a card
+  // you edit on the main page isn't overwritten every frame by the same reading.
+  function emit(reading, key, id) {
+    if (emitted[key] === id) return;      // unchanged -> don't re-assert (leave undefined)
+    emitted[key] = id;
+    setSlot(reading, key, id);
+  }
   function tick() {
     if (!grabFrame()) return;
     var reading = { hero: [undefined, undefined], board: [undefined, undefined, undefined, undefined, undefined] };
@@ -879,7 +913,7 @@
     function allEmpty(keys) { return keys.length && keys.every(function (k) { var s = stab[k]; return s && s.count >= 2 && s.res.status === "empty"; }); }
     var newHand = anyLatched && (boardBoxed.length ? allEmpty(boardBoxed) : allEmpty(REGION_KEYS.filter(function (k) { return regions[k]; })));
     if (newHand) {
-      REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; setSlot(reading, k, null); });
+      REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; emit(reading, k, null); });
     }
     // Pass 2: emit each card. A latched or manually-set card HOLDS its value for
     // the whole hand (it won't flicker or revert); an unlatched spot latches the
@@ -888,11 +922,11 @@
       var suitKey = suitKeyOf(key);
       var st = stab[key];
       if (!regions[key] || !st) return;
-      if (manual[key] || latch[key] != null) { setSlot(reading, key, latch[key]); return; }
+      if (manual[key] || latch[key] != null) { emit(reading, key, latch[key]); return; }
       if (st.count >= 2) {
         var res = st.res;
-        if (res.status === "card") { latch[key] = res.id; setSlot(reading, key, res.id); delete teachSuppressed[key]; }
-        else if (res.status === "empty") { setSlot(reading, key, null); delete teachSuppressed[key]; }
+        if (res.status === "card") { latch[key] = res.id; emit(reading, key, res.id); delete teachSuppressed[key]; }
+        else if (res.status === "empty") { emit(reading, key, null); delete teachSuppressed[key]; }
         else if (res.status === "unknown" && res.teach) {
           var busy = teachSuppressed[key] !== undefined || (calibrating && (selectedKey === key || selectedKey === suitKey));
           if (!busy) unknowns.push({ key: key, kind: res.teach, img: res.img, sig: res.sig, cut: res.cut, rank: res.rank });
@@ -903,7 +937,7 @@
     NUM_KEYS.forEach(function (key) {
       var rect = regions[key];
       if (!rect) return;
-      var num = readNumber(regionImageData(rect));
+      var num = readNumber(regionImageData(rect), key === "tocall" ? { labelText: true } : null);
       var val = "num:" + num.str;
       var st = stab[key];
       if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
@@ -913,8 +947,8 @@
           if (key === "pot") reading.pot = num.value;
           else if (key === "mystack") reading.stack = num.value;
           else if (key === "tocall") reading.toCall = num.value;
-        } else if (key === "tocall" && !/[0-9?]/.test(num.str)) {
-          reading.toCall = 0;   // CHECK / no amount on the button = nothing to call
+        } else if (key === "tocall" && !num.hasDigit) {
+          reading.toCall = 0;   // CHECK / BET / no amount on the button = nothing to call
         }
       }
       // Prompt to teach any unknown digit (pot / stack / call button share digits).
@@ -1146,12 +1180,14 @@
       "or suit reads wrong, tap the card in the strip to set it (that teaches it, and it stays until " +
       "the card changes). Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger."));
     modal.appendChild(h("p", "watch-note",
-      "Bets & your call: box the AMOUNT on your call button (\"To call\") — over just the number, e.g. " +
-      "the 100K in “CALL 100K”. When it shows a number that becomes the price to call and the advice " +
-      "updates; when the button is a plain CHECK (no number there) it reads as 0. You can also box " +
-      "each opponent's bet in front of their seat — the highest is the current bet, and it sets the " +
-      "price to call if you haven't boxed the button. The action banner then tells you FOLD / CHECK / " +
-      "CALL / RAISE and a size. (Digits are shared with the Pot/Stack, so teach a number once.)"));
+      "Bets & your call: box your call button (\"To call\") — you can box the WHOLE button (the CALL/" +
+      "CHECK/BET word is ignored) or just the amount. When it shows an amount (e.g. CALL 100K) that " +
+      "becomes the price to call and the advice updates; when it's a plain CHECK / BET with no number, " +
+      "it reads as 0 (nothing to call) so you get a CHECK/BET recommendation. For a K/M amount, the " +
+      "first time you'll be asked to teach the K (or M) once. You can also box each opponent's bet in " +
+      "front of their seat — the highest is the current bet, and it sets the price to call if you " +
+      "haven't boxed the button. The action banner then tells you FOLD / CHECK / CALL / RAISE and a " +
+      "size. (Digits are shared with the Pot/Stack, so teach a number once.)"));
     modal.appendChild(h("p", "watch-note",
       "Seats (opponents only — you're the last player): set Opponent seats to how many are at your " +
       "table, then box that many seat spots (the extra Seat chips are dimmed). Teach the three " +
@@ -1487,6 +1523,12 @@
       var st = stab[key];
       var chip = h("span", "strip-card");
       if (!regions[key]) { chip.classList.add("off"); chip.textContent = "–"; }
+      // A latched / manually-set card shows its held value so a correction visibly
+      // sticks (the raw reader may still disagree underneath).
+      else if (latch[key] != null) {
+        chip.textContent = Poker.cardLabel(latch[key]); chip.classList.add(cardColor(latch[key]));
+        if (manual[key]) chip.classList.add("manual");
+      }
       else if (!st || st.count < 2) { chip.textContent = "…"; }
       else if (st.res.status === "card") { chip.textContent = Poker.cardLabel(st.res.id); chip.classList.add(cardColor(st.res.id)); }
       else if (st.res.status === "empty") { chip.textContent = "·"; chip.classList.add("off"); }
@@ -1681,6 +1723,7 @@
     else if (key === "hero1") reading.hero = [undefined, idOrNull];
     else { reading.board = [undefined, undefined, undefined, undefined, undefined]; reading.board[+key.slice(1)] = idOrNull; }
     if (idOrNull === null) { delete latch[key]; delete manual[key]; }
+    emitted[key] = idOrNull;   // remember what we set, so the tick won't re-assert it
     API.applyReading(reading);
   }
   // Correction popup: set the true card for a region (also teaches it).
