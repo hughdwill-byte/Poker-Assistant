@@ -364,18 +364,45 @@
     }
     return m;
   }
-  // Segment ink columns into glyph x-ranges.
+  // Segment ink columns into glyph x-ranges. Bold digits with anti-aliasing (and
+  // grouping commas) can leave no fully-blank column between them, which would
+  // merge a whole number like "90,000" into ONE blob (and then the teach prompt
+  // asks you to name the entire number as a single digit). So after finding the
+  // ink runs we SPLIT any run that's far wider than a digit into digit-width
+  // pieces - number fonts in these UIs are near-monospaced, so equal slices land
+  // one digit each. Short glyphs (a comma / decimal point) are never split.
   function segmentGlyphs(mask, w, h) {
-    // Low threshold so a small decimal point / comma still registers as its own
-    // column (otherwise 1.2M loses the dot and reads as 12M).
-    var onThr = Math.max(1, h * 0.03), glyphs = [], run = null;
-    for (var x = 0; x < w; x++) {
-      var c = 0; for (var y = 0; y < h; y++) c += mask[y * w + x];
-      var on = c >= onThr;
-      if (on) { if (!run) run = { x0: x, x1: x }; else run.x1 = x; }
-      else if (run) { glyphs.push(run); run = null; }
+    // Column ink profile. A slightly higher floor than 1px rejects a thin
+    // anti-alias bridge between digits while still catching a short dot/comma.
+    var onThr = Math.max(2, Math.round(h * 0.08)), col = new Array(w), x, y, c;
+    for (x = 0; x < w; x++) { c = 0; for (y = 0; y < h; y++) c += mask[y * w + x]; col[x] = c; }
+    var runs = [], run = null;
+    for (x = 0; x < w; x++) {
+      if (col[x] >= onThr) { if (!run) run = { x0: x, x1: x }; else run.x1 = x; }
+      else if (run) { runs.push(run); run = null; }
     }
-    if (run) glyphs.push(run);
+    if (run) runs.push(run);
+    // Vertical extent of each run (to tell a full-height digit from a comma).
+    function runHeight(r) {
+      var y0 = h, y1 = -1;
+      for (var yy = 0; yy < h; yy++) for (var xx = r.x0; xx <= r.x1; xx++) if (mask[yy * w + xx]) { if (yy < y0) y0 = yy; if (yy > y1) y1 = yy; break; }
+      return y1 - y0 + 1;
+    }
+    var maxH = 1; runs.forEach(function (r) { r.h = runHeight(r); if (r.h > maxH) maxH = r.h; });
+    var glyphs = [];
+    runs.forEach(function (r) {
+      var rw = r.x1 - r.x0 + 1;
+      var digitW = Math.max(4, Math.round(r.h * 0.62));      // typical single-digit width
+      // Only split runs that are a FULL-height glyph row and clearly multi-digit.
+      // The 2x floor keeps a single wide letter (a K/M suffix, ~1x tall) intact
+      // while still catching two-or-more touching digits (>=~1.3x tall).
+      if (r.h >= 0.55 * maxH && rw > 2.0 * digitW) {
+        var k = Math.max(2, Math.round(rw / digitW));
+        for (var i = 0; i < k; i++) {
+          glyphs.push({ x0: r.x0 + Math.round(i * rw / k), x1: r.x0 + Math.round((i + 1) * rw / k) - 1 });
+        }
+      } else glyphs.push({ x0: r.x0, x1: r.x1 });
+    });
     return glyphs;
   }
   // Crop an arbitrary rectangle to a fresh ImageData.
