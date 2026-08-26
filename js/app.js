@@ -18,6 +18,7 @@
     heroIndex: 0,
     pot: 0,
     toCall: 0,
+    toCallPending: false,   // watch sees a bet on the call button but can't read the amount yet
     board: [null, null, null, null, null], // slot -> card id or null (unknown)
     dead: [],                               // mucked cards, removed until shuffle
     players: [],                            // { name, cards:[id|null,id|null], active, stack }
@@ -426,6 +427,17 @@
       return;
     }
 
+    // A bet is on the call button but its amount hasn't been taught yet - don't
+    // pretend it's a free check; tell the player to teach the call amount.
+    if (state.toCallPending && !(state.toCall > 0)) {
+      setRec("neutral", "There's a bet to call", "",
+        ["Watch can see a bet on your call button but hasn't learned its digits yet.",
+         "Teach the call amount once (tap the digits it asks about) and it'll say CALL / RAISE / FOLD.",
+         "Your chance to win right now is " + (res.equity * 100).toFixed(1) + "%."], res);
+      setBanner("neutral", "BET TO CALL", "teach the call amount · " + (res.equity * 100).toFixed(0) + "% to win");
+      return;
+    }
+
     var adv = P.advise({
       equity: res.equity,
       pot: state.pot,
@@ -761,6 +773,10 @@
     if (typeof reading.toCall === "number" && reading.toCall >= 0 && state.toCall !== reading.toCall) {
       state.toCall = reading.toCall; $("in-call").value = reading.toCall; changed = true;
     }
+    // A bet is on the call button but its amount isn't readable yet (teach the
+    // digits): don't let it look like a free check.
+    if (typeof reading.toCall === "number") { if (state.toCallPending) { state.toCallPending = false; changed = true; } }
+    else if (reading.toCallPending && !state.toCallPending) { state.toCallPending = true; changed = true; }
     if (typeof reading.stack === "number" && reading.stack >= 0) {
       var hp = state.players[state.heroIndex];
       if (hp.stack !== reading.stack) { hp.stack = reading.stack; syncStackInput(); changed = true; }

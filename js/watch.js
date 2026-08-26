@@ -485,19 +485,27 @@
     // for an action button we split into clusters on the word/number space and
     // keep the amount cluster (with digits, else the rightmost), so the word is
     // ignored but the amount's own glyphs can still be taught.
-    var numTokens = toks;
+    var numTokens = toks, amountPresent = true;
     if (opts.labelText && toks.length) {
-      var spaceThr = Math.max(6, medW * 0.8), clusters = [], cur = null, prevX1 = null;
-      for (var c = 0; c < toks.length; c++) {
-        if (cur && toks[c].x0 - prevX1 > spaceThr) { clusters.push(cur); cur = null; }
-        if (!cur) cur = [];
-        cur.push(toks[c]); prevX1 = toks[c].x1;
-      }
-      if (cur) clusters.push(cur);
-      function hasDig(cl) { return cl.some(function (t) { return t.t === "lab" && /[0-9]/.test(t.lab); }); }
-      numTokens = null;
-      for (var d = 0; d < clusters.length; d++) { if (hasDig(clusters[d])) { numTokens = clusters[d]; break; } }
-      if (!numTokens) numTokens = clusters[clusters.length - 1] || [];
+      // The space between the button's WORD (CALL/RAISE) and its amount is much
+      // wider than the gaps within the word or within the number, so look for one
+      // DOMINANT gap and treat whatever follows it as the amount. A lone word
+      // (CHECK / BET / FOLD) has no such gap - its letters are evenly spaced.
+      var gaps = [];
+      for (var gi = 1; gi < toks.length; gi++) gaps.push({ i: gi, g: toks[gi].x0 - toks[gi - 1].x1 });
+      var maxG = null;
+      for (var gj = 0; gj < gaps.length; gj++) if (!maxG || gaps[gj].g > maxG.g) maxG = gaps[gj];
+      var others = gaps.filter(function (x) { return x !== maxG; }).map(function (x) { return x.g; }).sort(function (a, b) { return a - b; });
+      var medGap = others.length ? others[others.length >> 1] : 0;
+      var splitAt = (maxG && maxG.g > maxH * 0.5 && maxG.g > Math.max(3, medGap * 1.8)) ? maxG.i : -1;
+      numTokens = splitAt >= 0 ? toks.slice(splitAt) : toks;
+      // Drop any merged word prefix before the first recognised digit.
+      var fd = -1;
+      for (var e = 0; e < numTokens.length; e++) { if (numTokens[e].t === "lab" && /[0-9]/.test(numTokens[e].lab)) { fd = e; break; } }
+      if (fd > 0) numTokens = numTokens.slice(fd);
+      // There's an AMOUNT (even if untaught) when a distinct trailing group sits
+      // after the word gap, or a digit was actually read.
+      amountPresent = splitAt >= 0 || fd >= 0;
     }
     var str = "", unknowns = [];
     for (var k = 0; k < numTokens.length; k++) {
@@ -507,7 +515,9 @@
       if (isIgnored(tk.sig, "digit")) continue;          // user skipped this shape
       str += "?"; unknowns.push({ img: tk.img, sig: tk.sig, kind: "digit" });
     }
-    return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), unknowns: unknowns };
+    // For a plain numeric box, "amount present" just means some digits were read.
+    if (!opts.labelText) amountPresent = /[0-9]/.test(str);
+    return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), amountPresent: amountPresent, unknowns: unknowns };
   }
 
   // ---------- Corner-based card recognition (rank + suit separately) ----------
@@ -936,6 +946,7 @@
   var manual = {};       // region key -> true if you set it by hand
   var emitted = {};      // region key -> last value pushed to the main page
   var seatHadCards = {}; // seat key   -> true once dealt cards this hand (for fold detection)
+  var boardSeen = false; // community cards have appeared this round (so their later clearing = new hand)
   var seatOverride = {}; // seat key   -> { state, sig:[...] }
   var OVERRIDE_CHANGE = 0.85; // signature RMS beyond which a seat spot has "changed"
   function sigChanged(a, bVec) { return rms(a, bVec) > OVERRIDE_CHANGE; }
@@ -965,14 +976,20 @@
       st.res = res; st.cardImg = img;
       if (teachSuppressed[key] !== undefined && teachSuppressed[key] !== val) delete teachSuppressed[key];
     });
-    // New-hand detection: when the community cards all clear (or, if the board
-    // isn't boxed, every card spot clears) a fresh hand has started - drop all
-    // latched/manual cards so the new deal is read afresh.
+    // New-hand detection: a fresh hand is only when the COMMUNITY (middle) cards
+    // go from PRESENT to gone. At the start of a hand the board is also empty, but
+    // we haven't seen community cards yet this round, so the hole cards are NOT
+    // reset just because nothing is in the middle - only once a flop has appeared
+    // and then cleared. (If the board isn't boxed, we fall back to your hole cards
+    // clearing after they'd been dealt.)
     var boardBoxed = REGION_KEYS.slice(2).filter(function (k) { return regions[k]; });
-    var anyLatched = REGION_KEYS.some(function (k) { return latch[k] != null; });
+    var heroBoxed = REGION_KEYS.slice(0, 2).filter(function (k) { return regions[k]; });
     function allEmpty(keys) { return keys.length && keys.every(function (k) { var s = stab[k]; return s && s.count >= 2 && s.res.status === "empty"; }); }
-    var newHand = anyLatched && (boardBoxed.length ? allEmpty(boardBoxed) : allEmpty(REGION_KEYS.filter(function (k) { return regions[k]; })));
+    var watchKeys = boardBoxed.length ? boardBoxed : heroBoxed;   // what marks a round
+    if (watchKeys.some(function (k) { return latch[k] != null; })) boardSeen = true; // cards are on the table
+    var newHand = boardSeen && allEmpty(watchKeys);              // they've now cleared -> next hand
     if (newHand) {
+      boardSeen = false;
       REGION_KEYS.forEach(function (k) { delete latch[k]; delete manual[k]; delete unknownStreak[k]; delete votes[k]; emit(reading, k, null); });
       // Fresh hand: forget who was dealt in and any manual seat labels, so seats
       // are read cards-first from this deal onward.
@@ -1037,8 +1054,12 @@
           if (key === "pot") reading.pot = num.value;
           else if (key === "mystack") reading.stack = num.value;
           else if (key === "tocall") reading.toCall = num.value;
-        } else if (key === "tocall" && !num.hasDigit) {
-          reading.toCall = 0;   // CHECK / BET / no amount on the button = nothing to call
+        } else if (key === "tocall") {
+          if (!num.amountPresent) {
+            reading.toCall = 0;            // genuine CHECK / BET - no amount on the button
+          } else {
+            reading.toCallPending = true;  // there IS a bet, we just can't read it yet
+          }
         }
       }
       // Prompt to teach any unknown digit (pot / stack / call button share digits).
