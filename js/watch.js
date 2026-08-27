@@ -1133,21 +1133,24 @@
     });
     // Opponents' bets, boxed in front of each seat. The HIGHEST is the current
     // bet; if the call button isn't boxed, that's the price to call.
-    var highBet = null;
-    BET_KEYS.forEach(function (key) {
+    var highBet = null, betVals = [];
+    BET_KEYS.forEach(function (key, bi) {
       var rect = regions[key];
-      if (!rect) return;
+      if (!rect) { betVals[bi] = undefined; return; }   // not boxed -> leave that seat untouched
       var num = readNumber(regionImageData(rect));
       var val = "num:" + num.str;
       var st = stab[key];
       if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
       st.num = num;
-      if (st.count >= 2 && num.value != null && (highBet == null || num.value > highBet)) highBet = num.value;
+      var v = (st.count >= 2 && num.value != null) ? num.value : null;   // null = boxed but no bet yet
+      betVals[bi] = v;
+      if (v != null && (highBet == null || v > highBet)) highBet = v;
       // Teach unknown bet digits too (shared with Pot/Stack/Call).
       if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
       else delete numUnkStreak[key];
       if ((numUnkStreak[key] || 0) >= 2) unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
     });
+    if (BET_KEYS.some(function (k) { return regions[k]; })) reading.bets = betVals;   // show opponents' bets on the main page
     // Price to call FROM THE BETS on the table: the highest opponent bet minus
     // what you've already put in (My bet). No bet read, or none above yours (or
     // only felt showing), means nothing to call -> CHECK. This is more reliable

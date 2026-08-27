@@ -31,7 +31,7 @@
   function ensurePlayers() {
     while (state.players.length < state.numPlayers) {
       var i = state.players.length;
-      state.players.push({ name: defaultName(i), cards: [null, null], active: true, stack: 1000 });
+      state.players.push({ name: defaultName(i), cards: [null, null], active: true, stack: 1000, bet: 0 });
     }
     state.players.length = state.numPlayers;
     if (state.heroIndex >= state.numPlayers) state.heroIndex = 0;
@@ -225,6 +225,14 @@
       bar.innerHTML = '<span style="width:' + (wp * 100).toFixed(1) + '%"></span><b>' +
         (player.active ? (res ? (wp * 100).toFixed(1) + "%" : "—") : "folded") + "</b>";
       seat.appendChild(bar);
+
+      // Current bet in front of this player (from Watch's bet boxes).
+      if (idx !== state.heroIndex && player.bet > 0) {
+        var betChip = document.createElement("div");
+        betChip.className = "seat-bet";
+        betChip.textContent = "Bet " + player.bet.toLocaleString();
+        seat.appendChild(betChip);
+      }
 
       // Foot: stack + YOU tag.
       var foot = document.createElement("div");
@@ -766,6 +774,18 @@
         var pl = state.players[a.index];
         if (pl && pl.active !== a.active) { pl.active = a.active; changed = true; }
       });
+    }
+    // Opponents' bets from Watch, mapped to the non-hero seats in order. undefined
+    // = that bet box isn't set (leave it); null = boxed but no bet -> 0.
+    if (reading.bets) {
+      var oi = 0;
+      for (var pi = 0; pi < state.players.length; pi++) {
+        if (pi === state.heroIndex) continue;
+        var bv = reading.bets[oi]; oi++;
+        if (bv === undefined) continue;
+        var nb = bv == null ? 0 : bv;
+        if (state.players[pi].bet !== nb) { state.players[pi].bet = nb; changed = true; }
+      }
     }
     if (typeof reading.pot === "number" && reading.pot >= 0 && state.pot !== reading.pot) {
       state.pot = reading.pot; $("in-pot").value = reading.pot; changed = true;
