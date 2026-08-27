@@ -342,22 +342,21 @@
   // the background, so text/pips stand out as the minority "ink" - robust even
   // when a bit of felt or border is included in the crop.
   function estimateBg(img) {
-    var w = img.width, h = img.height, d = img.data, vals = [], nonFelt = [], feltN = 0, tot = 0;
+    var w = img.width, h = img.height, d = img.data, vals = [], nonFelt = [], tot = 0;
     var step = Math.max(1, Math.floor(Math.sqrt(w * h / 500)));
     var felt = seatRef.feltRGB, ft = 46;
     for (var y = 0; y < h; y += step) for (var x = 0; x < w; x += step) {
       var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
       var lum = 0.299 * r + 0.587 * g + 0.114 * b;
       vals.push(lum); tot++;
-      if (felt && Math.abs(r - felt[0]) < ft && Math.abs(g - felt[1]) < ft && Math.abs(b - felt[2]) < ft) feltN++;
-      else nonFelt.push(lum);
+      if (!(felt && Math.abs(r - felt[0]) < ft && Math.abs(g - felt[1]) < ft && Math.abs(b - felt[2]) < ft)) nonFelt.push(lum);
     }
-    // A number often sits on a dark PILL surrounded by felt. Only when felt is
-    // captured AND it's a real chunk of the box AND there's a substantial
-    // non-felt surface (the pill) do we background on that pill - so the whole
-    // number reads, not the pill blob. Otherwise (cards, or thin text straight on
-    // felt) keep the plain median so nothing regresses.
-    var pick = (feltN / (tot || 1) > 0.22 && nonFelt.length / (tot || 1) > 0.30) ? nonFelt : vals;
+    // A number often sits on a dark PILL surrounded by felt. When felt is
+    // captured and there's a real chunk of non-felt surface (the pill, or a
+    // card's body), background on THAT so the whole number reads - consistently,
+    // with no felt-margin flicker between boxes. Only a box that's essentially
+    // thin text on bare felt (little non-felt) keeps the plain median.
+    var pick = (felt && nonFelt.length >= 8 && nonFelt.length / (tot || 1) > 0.12) ? nonFelt : vals;
     pick.sort(function (a, b) { return a - b; });
     return pick[pick.length >> 1];
   }
@@ -1011,6 +1010,22 @@
     emitted[key] = id;
     setSlot(reading, key, id);
   }
+  // Stabilise a numeric read on its PARSED VALUE (not the exact string): the same
+  // number segments slightly differently frame to frame (10K vs 1 0K), which kept
+  // resetting a string counter so a perfectly-read number never surfaced. A couple
+  // of blank frames are tolerated so it doesn't flicker back to "-". Sets st.stable
+  // to the value to trust, or null.
+  function stabiliseNum(st, num) {
+    if (num.value != null) {
+      st.miss = 0;
+      if (st.lastVal === num.value) st.vcount = (st.vcount || 0) + 1;
+      else { st.lastVal = num.value; st.vcount = 1; }
+    } else {
+      st.miss = (st.miss || 0) + 1;
+      if (st.miss >= 3) { st.vcount = 0; st.lastVal = null; }
+    }
+    st.stable = (st.vcount >= 2) ? st.lastVal : null;
+  }
   function tick() {
     if (!grabFrame()) return;
     var reading = { hero: [undefined, undefined], board: [undefined, undefined, undefined, undefined, undefined] };
@@ -1099,21 +1114,21 @@
       if (!rect) return;
       var num = readNumber(regionImageData(rect), key === "tocall" ? { labelText: true } : null);
       var val = "num:" + num.str;
-      var st = stab[key];
-      if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
+      var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
+      if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
       st.num = num;
-      if (st.count >= 2) {
-        if (num.value != null) {
-          if (key === "pot") reading.pot = num.value;
-          else if (key === "mystack") reading.stack = num.value;
-          else if (key === "tocall") reading.toCall = num.value;
-        } else if (key === "tocall") {
-          if (!num.amountPresent) {
-            reading.toCall = 0;            // genuine CHECK / BET - no amount on the button
-          } else {
-            reading.toCallPending = true;  // there IS a bet, we just can't read it yet
-          }
-        }
+      // Stabilise on the parsed VALUE, not the exact string: the same number often
+      // segments slightly differently frame to frame (10K vs 1 0K), which kept
+      // resetting the string counter so a perfectly-read number never surfaced. A
+      // couple of blank frames are tolerated so it doesn't flicker back to "-".
+      stabiliseNum(st, num);
+      if (st.stable != null) {
+        if (key === "pot") reading.pot = st.stable;
+        else if (key === "mystack") reading.stack = st.stable;
+        else if (key === "tocall") reading.toCall = st.stable;
+      } else if (key === "tocall" && st.count >= 2) {
+        if (!num.amountPresent) reading.toCall = 0;            // genuine CHECK - no amount
+        else reading.toCallPending = true;                    // a bet we can't read yet
       }
       // Prompt to teach any unknown digit (pot / stack / call button share digits).
       // Use a persistence streak, NOT exact-string stability: the call button's
@@ -1139,10 +1154,11 @@
       if (!rect) { betVals[bi] = undefined; return; }   // not boxed -> leave that seat untouched
       var num = readNumber(regionImageData(rect));
       var val = "num:" + num.str;
-      var st = stab[key];
-      if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
+      var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
+      if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
       st.num = num;
-      var v = (st.count >= 2 && num.value != null) ? num.value : null;   // null = boxed but no bet yet
+      stabiliseNum(st, num);
+      var v = st.stable;                                   // stable value (null = boxed but no bet yet)
       betVals[bi] = v;
       if (v != null && (highBet == null || v > highBet)) highBet = v;
       // Teach unknown bet digits too (shared with Pot/Stack/Call).
@@ -1768,10 +1784,11 @@
     NUM_KEYS.forEach(function (key) {
       if (!regions[key]) return;
       var st = stab[key];
-      var txt = (st && st.num)
-        ? (st.num.value != null ? st.num.value.toLocaleString() : (key === "tocall" && st.num.str === "" ? "check" : st.num.str || "?"))
-        : "…";
-      var chip = h("span", "strip-num clickable" + (st && st.num && st.num.value == null && !(key === "tocall" && st.num.str === "") ? " q" : ""),
+      // Prefer the STABLE held value so a one-frame wobble doesn't blank it.
+      var held = st && st.stable != null ? st.stable : null;
+      var txt = held != null ? held.toLocaleString()
+        : (st && st.num ? (key === "tocall" && st.num.str === "" ? "check" : (st.num.str || "?")) : "…");
+      var chip = h("span", "strip-num clickable" + (held == null && st && st.num && !(key === "tocall" && st.num.str === "") ? " q" : ""),
         numLabel[key] + txt);
       chip.setAttribute("data-numkey", key);
       chip.title = "Click to teach this number (type what it shows)";
@@ -1780,7 +1797,7 @@
     // Opponents' bets, with the highest (the current bet) marked. Click to teach.
     var betBoxedKeys = BET_KEYS.filter(function (key) { return regions[key]; });
     if (betBoxedKeys.length) {
-      var betVals = betBoxedKeys.map(function (key) { var st = stab[key]; return st && st.num && st.num.value != null ? st.num.value : null; });
+      var betVals = betBoxedKeys.map(function (key) { var st = stab[key]; return st && st.stable != null ? st.stable : null; });
       var hi = betVals.reduce(function (m, v) { return v != null && (m == null || v > m) ? v : m; }, null);
       betBoxedKeys.forEach(function (key, i) {
         var v = betVals[i], isHi = v != null && v === hi;
@@ -2057,6 +2074,10 @@
   function teachAs(label, kind) {
     if (!teaching) return;
     var key = teaching.key;
+    // Unlearn any close, DIFFERENTLY-labelled taught glyph first - e.g. teaching
+    // a K removes a "0" you'd taught on a near-identical crop, so 10K stops
+    // reading as 100.
+    unlearnConfusers(teaching.sig, kind, label);
     templates.push({ label: label, kind: kind, red: teaching.sig.red, holes: teaching.sig.holes, holeY: teaching.sig.holeY, vec: Array.prototype.slice.call(teaching.sig.vec) });
     saveJSON(LS_TEMPLATES, templates);
     teaching = null; renderedTeachId = null;
