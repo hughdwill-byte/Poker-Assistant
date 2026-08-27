@@ -96,7 +96,7 @@
       return vec;
     }
     return db.templates.map(function (t) {
-      return { label: t.label, kind: t.kind, red: t.red, holes: t.holes, vec: unpack(t.bits, t.n), db: true };
+      return { label: t.label, kind: t.kind, red: t.red, holes: t.holes, holeY: (t.holeY == null ? -1 : t.holeY), vec: unpack(t.bits, t.n), db: true };
     });
   })();
 
@@ -272,20 +272,22 @@
       if (px + 1 < bw) push(px + 1, py); if (px > 0) push(px - 1, py);
       if (py + 1 < bh) push(px, py + 1); if (py > 0) push(px, py - 1);
     }
-    var holes = 0, minArea = Math.max(2, Math.round(bw * bh * 0.02));
+    var holes = 0, minArea = Math.max(2, Math.round(bw * bh * 0.02)), bigArea = 0, bigCy = -1;
     for (y = 0; y < bh; y++) for (x = 0; x < bw; x++) {
       var id0 = y * bw + x;
       if (!ink(x, y) && !vis[id0]) {                 // an unreached background pixel = new hole
-        var area = 0, st2 = [id0]; vis[id0] = 1;
-        while (st2.length) { var q = st2.pop(), qx = q % bw, qy = (q / bw) | 0; area++;
+        var area = 0, sumY = 0, st2 = [id0]; vis[id0] = 1;
+        while (st2.length) { var q = st2.pop(), qx = q % bw, qy = (q / bw) | 0; area++; sumY += qy;
           [[1,0],[-1,0],[0,1],[0,-1]].forEach(function (d) { var nx = qx + d[0], ny = qy + d[1];
             if (nx >= 0 && nx < bw && ny >= 0 && ny < bh) { var nid = ny * bw + nx; if (!ink(nx, ny) && !vis[nid]) { vis[nid] = 1; st2.push(nid); } } });
         }
-        if (area >= minArea) holes++;
+        if (area >= minArea) { holes++; if (area > bigArea) { bigArea = area; bigCy = (sumY / area) / (bh - 1); } }
       }
     }
-    return holes;
+    return { count: holes, cy: bigCy };   // cy = largest hole's vertical centre (0 top .. 1 bottom), -1 if none
   }
+  // Backward-compatible hole COUNT (callers that only need the number).
+  function holeCount(mask, w, x0, y0, x1, y1) { return countHoles(mask, w, x0, y0, x1, y1).count; }
   // Colour fractions of an image region's bounding box (for suit red/black and
   // for rejecting colourful chip icons that aren't glyphs).
   function boxColor(img, x0, y0, x1, y1) {
@@ -340,14 +342,23 @@
   // the background, so text/pips stand out as the minority "ink" - robust even
   // when a bit of felt or border is included in the crop.
   function estimateBg(img) {
-    var w = img.width, h = img.height, d = img.data, vals = [];
+    var w = img.width, h = img.height, d = img.data, vals = [], all = [];
     var step = Math.max(1, Math.floor(Math.sqrt(w * h / 500)));
+    var felt = seatRef.feltRGB, ft = 46;
     for (var y = 0; y < h; y += step) for (var x = 0; x < w; x += step) {
-      var i = (y * w + x) * 4;
-      vals.push(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+      var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
+      var lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      all.push(lum);
+      // Ignore felt when picking the background: a bet/number often sits on a
+      // dark pill ON the felt, so the felt would otherwise be the "background"
+      // and the dark pill would wrongly read as ink (only part of the number).
+      var isGreen = (g - r > 22 && g - b > 12);
+      var isFelt = felt && Math.abs(r - felt[0]) < ft && Math.abs(g - felt[1]) < ft && Math.abs(b - felt[2]) < ft;
+      if (!isGreen && !isFelt) vals.push(lum);
     }
-    vals.sort(function (a, b) { return a - b; });
-    return vals[vals.length >> 1];
+    var use = vals.length >= 8 ? vals : all;               // if it's all felt, fall back
+    use.sort(function (a, b) { return a - b; });
+    return use[use.length >> 1];
   }
   // Binary ink mask of ONLY the card's red + black marks. A pixel is "ink" if it
   // is red (red channel dominant) or stands out from the background in luminance
@@ -357,13 +368,17 @@
   // the same shape mask, so ranks match across suit colours.
   function inkMask(img, bg) {
     var w = img.width, h = img.height, d = img.data, m = new Uint8Array(w * h);
+    var felt = seatRef.feltRGB, ft = 46;                    // your captured felt colour + tolerance
     for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
       var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
       var lum = 0.299 * r + 0.587 * g + 0.114 * b;
       var isRed = (r - g > 40 && r - b > 40 && r > 80);
-      var isGreen = (g - r > 22 && g - b > 12);            // table felt
+      var isGreen = (g - r > 22 && g - b > 12);            // table felt (generic)
+      // Also drop pixels close to the felt colour you captured, so a bet/number
+      // box that's just felt (no chip) produces no ink and reads as no number.
+      var isFelt = felt && Math.abs(r - felt[0]) < ft && Math.abs(g - felt[1]) < ft && Math.abs(b - felt[2]) < ft;
       var isContrast = Math.abs(lum - bg) > 55;             // dark glyph / light digit
-      m[y * w + x] = ((isRed || isContrast) && !isGreen) ? 1 : 0;
+      m[y * w + x] = ((isRed || isContrast) && !isGreen && !isFelt) ? 1 : 0;
     }
     return m;
   }
@@ -495,7 +510,8 @@
       if (col.colorful > 0.28) continue;                 // colourful chip icon -> ignore
       if (m.hgt < 0.55 * maxH) { toks.push({ t: "sep", x0: m.g.x0, x1: m.g.x1 }); continue; } // comma / decimal
       if (m.wid > 2.6 * medW) continue;                  // wide blob (icon) -> ignore
-      var sig = { vec: glyphVec(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), red: col.red, holes: countHoles(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1) };
+      var dh = countHoles(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1);
+      var sig = { vec: glyphVec(mask, w, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1), red: col.red, holes: dh.count, holeY: dh.cy };
       var lab = classifyGlyph(sig);                      // digit 0-9, or taught K/M, else null
       var crop = cropRect(img, m.g.x0, m.vb.y0, m.g.x1, m.vb.y1);
       toks.push({ t: lab != null ? "lab" : "unk", lab: lab, sig: sig, img: crop, x0: m.g.x0, x1: m.g.x1 });
@@ -599,6 +615,11 @@
         // (e.g. an 8 whose loops didn't both register) is never rejected and left
         // blank just because its holes were mis-counted.
         var score = base + ((kind !== "suit" && sig.holes != null && t.holes != null) ? 0.13 * Math.abs(sig.holes - t.holes) : 0);
+        // When both have exactly ONE hole, its vertical position separates a Q
+        // (loop high/centred) from a 6 (loop low) - a gentle ranking nudge only.
+        if (kind === "rank" && sig.holes === 1 && t.holes === 1 && sig.holeY >= 0 && t.holeY != null && t.holeY >= 0) {
+          score += 0.35 * Math.abs(sig.holeY - t.holeY);
+        }
         if (score < bestScore) { bestScore = score; bestBase = base; best = t; }
       }
     }
@@ -710,9 +731,10 @@
     if (!clusters.length) return null;
     var num = clusters[0];                                    // leftmost cluster = the number
     var nx0 = num.x0, nx1 = num.x1, nw = nx1 - nx0 + 1;
+    var rh = countHoles(mask, cw, nx0, rankBand.y0, nx1, rankBand.y1);
     var out = {
       rankImg: cropRect(img, nx0, rankBand.y0, nx1, rankBand.y1),
-      rankSig: { vec: glyphVec(mask, cw, nx0, rankBand.y0, nx1, rankBand.y1), red: 0, holes: countHoles(mask, cw, nx0, rankBand.y0, nx1, rankBand.y1) },
+      rankSig: { vec: glyphVec(mask, cw, nx0, rankBand.y0, nx1, rankBand.y1), red: 0, holes: rh.count, holeY: rh.cy },
     };
     // Suit = the ink DIRECTLY UNDER the number, inside a column strip around the
     // number's own columns (the big central suit sits to the right of the strip,
@@ -827,10 +849,11 @@
     var mask = inkMask(norm, estimateBg(norm));
     var bb = inkBBoxMask(mask, norm.width, norm.height);
     if (!bb) return null;
+    var bh2 = countHoles(mask, norm.width, bb.x0, bb.y0, bb.x1, bb.y1);
     return {
       vec: glyphVec(mask, norm.width, bb.x0, bb.y0, bb.x1, bb.y1),
       red: boxColor(norm, bb.x0, bb.y0, bb.x1, bb.y1).red,
-      holes: countHoles(mask, norm.width, bb.x0, bb.y0, bb.x1, bb.y1),
+      holes: bh2.count, holeY: bh2.cy,
       img: cropRect(norm, bb.x0, bb.y0, bb.x1, bb.y1),
     };
   }
@@ -1910,7 +1933,7 @@
       else { var g = extractGlyphs(regionImageData(regions[key])); rg = g && g.rankSig; sg = g && g.suitSig; }
       if (rg && rg.vec) {
         dropped += unlearnConfusers(rg, "rank", rankLabel);
-        templates.push({ label: rankLabel, kind: "rank", red: 0, holes: rg.holes, vec: Array.prototype.slice.call(rg.vec) }); learned = true;
+        templates.push({ label: rankLabel, kind: "rank", red: 0, holes: rg.holes, holeY: rg.holeY, vec: Array.prototype.slice.call(rg.vec) }); learned = true;
       }
       if (sg && sg.vec) {
         dropped += unlearnConfusers(sg, "suit", suitLabel);
@@ -1964,7 +1987,7 @@
       var dropped = 0;
       for (var i = 0; i < glyphs.length; i++) {
         dropped += unlearnConfusers(glyphs[i].sig, "digit", chars[i]);
-        templates.push({ label: chars[i], kind: "digit", red: glyphs[i].sig.red || 0, holes: glyphs[i].sig.holes, vec: Array.prototype.slice.call(glyphs[i].sig.vec) });
+        templates.push({ label: chars[i], kind: "digit", red: glyphs[i].sig.red || 0, holes: glyphs[i].sig.holes, holeY: glyphs[i].sig.holeY, vec: Array.prototype.slice.call(glyphs[i].sig.vec) });
       }
       saveJSON(LS_TEMPLATES, templates);
       stab[key] = null; delete numUnkStreak[key];
@@ -2021,7 +2044,7 @@
   function teachAs(label, kind) {
     if (!teaching) return;
     var key = teaching.key;
-    templates.push({ label: label, kind: kind, red: teaching.sig.red, holes: teaching.sig.holes, vec: Array.prototype.slice.call(teaching.sig.vec) });
+    templates.push({ label: label, kind: kind, red: teaching.sig.red, holes: teaching.sig.holes, holeY: teaching.sig.holeY, vec: Array.prototype.slice.call(teaching.sig.vec) });
     saveJSON(LS_TEMPLATES, templates);
     teaching = null; renderedTeachId = null;
     el.teach.hidden = true; el.teach.innerHTML = "";
