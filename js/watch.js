@@ -445,6 +445,22 @@
     var val = (mult > 1 && seps === 1) ? parseFloat(s) : parseInt(digits, 10);
     return isFinite(val) ? Math.round(val * mult) : null;
   }
+  // For an action-button crop, find the x where the AMOUNT begins: the right edge
+  // of the widest interior BLANK gap (the space between the word and the number).
+  // Returns -1 when there's no such wide gap (a lone word like CHECK).
+  function amountStartX(mask, w, h, onThr, minGap) {
+    var on = new Array(w), x, y, c;
+    for (x = 0; x < w; x++) { c = 0; for (y = 0; y < h; y++) c += mask[y * w + x]; on[x] = c >= onThr; }
+    var firstInk = -1, lastInk = -1;
+    for (x = 0; x < w; x++) if (on[x]) { if (firstInk < 0) firstInk = x; lastInk = x; }
+    if (firstInk < 0) return -1;
+    var gapStart = -1, bestW = 0, bestEnd = -1;
+    for (x = firstInk; x <= lastInk; x++) {
+      if (!on[x]) { if (gapStart < 0) gapStart = x; }
+      else if (gapStart >= 0) { var gw = x - gapStart; if (gw >= minGap && gw > bestW) { bestW = gw; bestEnd = x; } gapStart = -1; }
+    }
+    return bestEnd;
+  }
   // Read a numeric region -> { str, value, hasDigit, unknowns:[{img,sig,kind}] }
   // Robust to chip icons / commas / noise: we keep only digit-shaped glyphs
   // (tall enough, not too wide, not colourful) and drop the rest, so commas and
@@ -489,27 +505,21 @@
     // keep the amount cluster (with digits, else the rightmost), so the word is
     // ignored but the amount's own glyphs can still be taught.
     var numTokens = toks, amountPresent = false;
-    if (opts.labelText && toks.length) {
-      // The space between the button's WORD (CALL/RAISE) and its amount is much
-      // wider than the gaps within the word or within the number, so look for one
-      // DOMINANT gap and treat whatever follows it as the amount. A lone word
-      // (CHECK / BET / FOLD) has no such gap - its letters are evenly spaced.
-      var gaps = [];
-      for (var gi = 1; gi < toks.length; gi++) gaps.push({ i: gi, g: toks[gi].x0 - toks[gi - 1].x1 });
-      var maxG = null;
-      for (var gj = 0; gj < gaps.length; gj++) if (!maxG || gaps[gj].g > maxG.g) maxG = gaps[gj];
-      var others = gaps.filter(function (x) { return x !== maxG; }).map(function (x) { return x.g; }).sort(function (a, b) { return a - b; });
-      var medGap = others.length ? others[others.length >> 1] : 0;
-      var splitAt = (maxG && maxG.g > maxH * 0.5 && maxG.g > Math.max(3, medGap * 1.8)) ? maxG.i : -1;
-      numTokens = splitAt >= 0 ? toks.slice(splitAt) : toks;
-      // Drop any merged word prefix before the first recognised digit.
+    if (opts.labelText) {
+      // Find where the AMOUNT begins by the real BLANK SPACE between the button's
+      // WORD (CALL / RAISE) and its number - a genuine run of empty columns much
+      // wider than the tiny gaps inside a word. Everything LEFT of it (the word)
+      // is dropped, so CALL / CHECK letters never land in the teach prompt. A lone
+      // word (CHECK) has no such space -> no amount -> it's a check.
+      var splitX = amountStartX(mask, w, h, Math.max(1, Math.round(maxH * 0.06)), Math.max(5, Math.round(maxH * 0.35)));
+      numTokens = splitX >= 0 ? toks.filter(function (t) { return t.x0 >= splitX; }) : toks;
+      // Also anchor to the first recognised digit (covers a number the space
+      // detector missed once some digits are taught, or a bare number box).
       var fd = -1;
       for (var e = 0; e < numTokens.length; e++) { if (numTokens[e].t === "lab" && /[0-9]/.test(numTokens[e].lab)) { fd = e; break; } }
       if (fd > 0) numTokens = numTokens.slice(fd);
-      // There's an AMOUNT (a bet), even before its digits are taught, when a
-      // distinct group sits after the button's word gap (CALL 10K), or a digit
-      // is already read. A lone word (CHECK) has no such gap -> it's a check.
-      amountPresent = splitAt >= 0 || fd >= 0;
+      amountPresent = splitX >= 0 || fd >= 0;
+      if (splitX < 0 && fd < 0) numTokens = [];   // lone word -> nothing to read/teach
     }
     var str = "", unknowns = [], numGlyphs = [];
     for (var k = 0; k < numTokens.length; k++) {
@@ -578,20 +588,22 @@
   // Nearest-neighbour over BOTH the built-in card DB and any user-taught glyphs.
   // Returns {label, dist} of the closest exemplar of this kind (or null).
   function nearestKind(sig, kind, useColor) {
-    var best = null, bs = 1e9;
+    var best = null, bestScore = 1e9, bestBase = 1e9;
     function scan(list) {
       for (var i = 0; i < list.length; i++) {
         var t = list[i];
         if (t.kind !== kind) continue;
-        var s = rms(t.vec, sig.vec) + (useColor ? 1.0 * Math.abs((t.red || 0) - sig.red) : 0);
-        // Topology penalty: a mismatch in hole count (8 vs 3, 6 vs 5, …) is a
-        // strong "different glyph" signal, so push those matches apart.
-        if (kind !== "suit" && sig.holes != null && t.holes != null) s += 0.28 * Math.abs(sig.holes - t.holes);
-        if (s < bs) { bs = s; best = t; }
+        var base = rms(t.vec, sig.vec) + (useColor ? 1.0 * Math.abs((t.red || 0) - sig.red) : 0);
+        // Hole count RANKS look-alikes apart (8 vs 3, 6 vs 5) but is a gentle
+        // nudge, NOT part of the accept distance - so a correct-shaped glyph
+        // (e.g. an 8 whose loops didn't both register) is never rejected and left
+        // blank just because its holes were mis-counted.
+        var score = base + ((kind !== "suit" && sig.holes != null && t.holes != null) ? 0.13 * Math.abs(sig.holes - t.holes) : 0);
+        if (score < bestScore) { bestScore = score; bestBase = base; best = t; }
       }
     }
     scan(dbTemplates); scan(templates);   // user teaches scanned last -> win ties
-    return best ? { label: best.label, dist: bs } : null;
+    return best ? { label: best.label, dist: bestBase, score: bestScore } : null;
   }
   function matchKind(sig, kind, useColor) {
     var m = nearestKind(sig, kind, useColor);
