@@ -42,7 +42,7 @@
   function suitKeyOf(k) { return k + "s"; }
   // Numeric regions read by digit OCR: the pot, your stack, and the amount on
   // your CALL button (the price to call - CHECK/no number means 0).
-  var NUM_KEYS = ["pot", "mystack", "tocall"];
+  var NUM_KEYS = ["pot", "mystack", "tocall", "mybet"];
   // Each opponent's bet, shown in front of their seat. The highest is the
   // current bet; it feeds the price to call when the button isn't boxed.
   var BET_KEYS = ["bet0", "bet1", "bet2", "bet3", "bet4", "bet5"];
@@ -58,7 +58,7 @@
   var REGION_LABELS = {
     hero0: "Your card 1", hero1: "Your card 2",
     b0: "Flop 1", b1: "Flop 2", b2: "Flop 3", b3: "Turn", b4: "River",
-    pot: "Pot (number)", mystack: "My stack (number)", tocall: "To call (button)",
+    pot: "Pot (number)", mystack: "My stack (number)", tocall: "To call (button)", mybet: "My bet (number)",
     s0: "Seat 1 spot", s1: "Seat 2 spot", s2: "Seat 3 spot", s3: "Seat 4 spot", s4: "Seat 5 spot", s5: "Seat 6 spot",
     s0c: "Seat 1 cards", s1c: "Seat 2 cards", s2c: "Seat 3 cards", s3c: "Seat 4 cards", s4c: "Seat 5 cards", s5c: "Seat 6 cards",
     bet0: "Seat 1 bet", bet1: "Seat 2 bet", bet2: "Seat 3 bet", bet3: "Seat 4 bet", bet4: "Seat 5 bet", bet5: "Seat 6 bet",
@@ -1110,8 +1110,25 @@
       if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
       st.num = num;
       if (st.count >= 2 && num.value != null && (highBet == null || num.value > highBet)) highBet = num.value;
+      // Teach unknown bet digits too (shared with Pot/Stack/Call).
+      if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
+      else delete numUnkStreak[key];
+      if ((numUnkStreak[key] || 0) >= 2) unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
     });
-    if (highBet != null && reading.toCall === undefined) reading.toCall = highBet; // no call button boxed -> highest bet
+    // Price to call FROM THE BETS on the table: the highest opponent bet minus
+    // what you've already put in (My bet). No bet read, or none above yours (or
+    // only felt showing), means nothing to call -> CHECK. This is more reliable
+    // than OCR'ing the CALL/CHECK word, so whenever any bet box is set the bets
+    // decide the call and the button is ignored.
+    var betBoxed = BET_KEYS.some(function (k) { return regions[k]; });
+    if (betBoxed) {
+      var myBet = 0, mbSt = stab.mybet;
+      if (regions.mybet && mbSt && mbSt.count >= 2 && mbSt.num && mbSt.num.value != null) myBet = mbSt.num.value;
+      reading.toCall = (highBet != null && highBet > myBet) ? (highBet - myBet) : 0;
+      reading.toCallPending = false;
+    } else if (highBet != null && reading.toCall === undefined) {
+      reading.toCall = highBet;                      // no bet boxes and no button -> raw highest bet
+    }
     // Seat state over the first `seatCount` OPPONENT seats, read CARDS-FIRST:
     // cards in the "cards" box = IN THE HAND; cards that were dealt and then
     // vanish (before the board clears) = FOLDED; a seat never dealt in this hand
@@ -1254,8 +1271,8 @@
     }
     chipGroup("Your cards & board — number box", REGION_KEYS, "");
     chipGroup("Card suits (optional 2nd box — more reliable)", SUIT_KEYS, " suit");
-    chipGroup("Pot / stack / call button (optional)", NUM_KEYS, " num");
-    chipGroup("Opponents' bets (optional)", BET_KEYS, " bet");
+    chipGroup("Pot / stack / call button / my bet (optional)", NUM_KEYS, " num");
+    chipGroup("Opponents' bets — highest − my bet = call (optional)", BET_KEYS, " bet");
     chipGroup("Seats — cards box (cards = in the hand)", SEATCARD_KEYS, " wseatc");
     chipGroup("Seats — spot box (＋ cross confirms empty)", SEAT_KEYS, " wseat");
     modal.appendChild(el.chips);
@@ -1342,16 +1359,15 @@
       "or suit reads wrong, tap the card in the strip to set it (that teaches it, and it stays until " +
       "the card changes). Tip: zoom the poker window (Ctrl/Cmd +) so cards are bigger."));
     modal.appendChild(h("p", "watch-note",
-      "Bets & your call: box your call button (\"To call\") — box the WHOLE button (the CALL/RAISE word " +
-      "before the amount is ignored) or just the amount. FASTEST teach: click the Pot / Stack / Call " +
-      "chip in the strip and TYPE what it shows (e.g. 100 or 1.2M) — it learns every digit at once. " +
-      "(Or wait and it'll ask you digit by digit.) That amount then becomes the price to call and the advice " +
-      "updates. A plain CHECK / BET with no number reads as 0 (nothing to call) so you get a CHECK/BET " +
-      "recommendation — if it asks about the CHECK/BET letters, hit Skip once. You can also box each " +
-      "opponent's bet in " +
-      "front of their seat — the highest is the current bet, and it sets the price to call if you " +
-      "haven't boxed the button. The action banner then tells you FOLD / CHECK / CALL / RAISE and a " +
-      "size. (Digits are shared with the Pot/Stack, so teach a number once.)"));
+      "Your call — the reliable way is from the BETS, not the button word: box each opponent's bet chip " +
+      "(in front of their seat) and box \"My bet\" (what you've already put in this round). The price to " +
+      "call = the highest opponent bet − your bet; if no one has bet, or nobody is above you (or only " +
+      "felt shows), it's a CHECK. Whenever any bet box is set, the bets decide the call and the button is " +
+      "ignored. FASTEST teach: click any Pot / Stack / My bet / Bet chip in the strip and TYPE what it " +
+      "shows (e.g. 100 or 1.2M) — it learns every digit at once (or it'll ask you digit by digit). Digits " +
+      "are shared, so teach each one once. (You can still box the \"To call\" button instead if you " +
+      "prefer; the CALL/RAISE word is ignored and a plain CHECK reads as 0.) The action banner then tells " +
+      "you FOLD / CHECK / CALL / RAISE and a size."));
     modal.appendChild(h("p", "watch-note",
       "Seats (opponents only — you're the last player): set Opponent seats to how many are at your " +
       "table, then box that many seat CARDS boxes (the extra Seat chips are dimmed). It reads seats " +
@@ -1712,7 +1728,7 @@
       if (key === "hero1") el.strip.appendChild(h("span", "strip-sep", "|"));
     });
     // Numeric readouts (pot / stack / call button).
-    var numLabel = { pot: "Pot ", mystack: "Stack ", tocall: "Call " };
+    var numLabel = { pot: "Pot ", mystack: "Stack ", tocall: "Call ", mybet: "My bet " };
     NUM_KEYS.forEach(function (key) {
       if (!regions[key]) return;
       var st = stab[key];
@@ -1725,14 +1741,16 @@
       chip.title = "Click to teach this number (type what it shows)";
       el.strip.appendChild(chip);
     });
-    // Opponents' bets, with the highest (the current bet) marked.
-    var betNums = [];
-    BET_KEYS.forEach(function (key) { if (regions[key]) { var st = stab[key]; betNums.push(st && st.num && st.num.value != null ? st.num.value : null); } });
-    if (betNums.length) {
-      var hi = betNums.reduce(function (m, v) { return v != null && (m == null || v > m) ? v : m; }, null);
-      betNums.forEach(function (v, i) {
-        var isHi = v != null && v === hi;
-        var chip = h("span", "strip-num bet" + (isHi ? " hi" : ""), "Bet " + (i + 1) + " " + (v != null ? v.toLocaleString() : "–"));
+    // Opponents' bets, with the highest (the current bet) marked. Click to teach.
+    var betBoxedKeys = BET_KEYS.filter(function (key) { return regions[key]; });
+    if (betBoxedKeys.length) {
+      var betVals = betBoxedKeys.map(function (key) { var st = stab[key]; return st && st.num && st.num.value != null ? st.num.value : null; });
+      var hi = betVals.reduce(function (m, v) { return v != null && (m == null || v > m) ? v : m; }, null);
+      betBoxedKeys.forEach(function (key, i) {
+        var v = betVals[i], isHi = v != null && v === hi;
+        var chip = h("span", "strip-num bet clickable" + (isHi ? " hi" : ""), "Bet " + (BET_KEYS.indexOf(key) + 1) + " " + (v != null ? v.toLocaleString() : "–"));
+        chip.setAttribute("data-numkey", key);
+        chip.title = "Click to teach this bet (type what it shows)";
         el.strip.appendChild(chip);
       });
     }
