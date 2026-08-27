@@ -342,23 +342,24 @@
   // the background, so text/pips stand out as the minority "ink" - robust even
   // when a bit of felt or border is included in the crop.
   function estimateBg(img) {
-    var w = img.width, h = img.height, d = img.data, vals = [], all = [];
+    var w = img.width, h = img.height, d = img.data, vals = [], nonFelt = [], feltN = 0, tot = 0;
     var step = Math.max(1, Math.floor(Math.sqrt(w * h / 500)));
     var felt = seatRef.feltRGB, ft = 46;
     for (var y = 0; y < h; y += step) for (var x = 0; x < w; x += step) {
       var i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
       var lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      all.push(lum);
-      // Ignore felt when picking the background: a bet/number often sits on a
-      // dark pill ON the felt, so the felt would otherwise be the "background"
-      // and the dark pill would wrongly read as ink (only part of the number).
-      var isGreen = (g - r > 22 && g - b > 12);
-      var isFelt = felt && Math.abs(r - felt[0]) < ft && Math.abs(g - felt[1]) < ft && Math.abs(b - felt[2]) < ft;
-      if (!isGreen && !isFelt) vals.push(lum);
+      vals.push(lum); tot++;
+      if (felt && Math.abs(r - felt[0]) < ft && Math.abs(g - felt[1]) < ft && Math.abs(b - felt[2]) < ft) feltN++;
+      else nonFelt.push(lum);
     }
-    var use = vals.length >= 8 ? vals : all;               // if it's all felt, fall back
-    use.sort(function (a, b) { return a - b; });
-    return use[use.length >> 1];
+    // A number often sits on a dark PILL surrounded by felt. Only when felt is
+    // captured AND it's a real chunk of the box AND there's a substantial
+    // non-felt surface (the pill) do we background on that pill - so the whole
+    // number reads, not the pill blob. Otherwise (cards, or thin text straight on
+    // felt) keep the plain median so nothing regresses.
+    var pick = (feltN / (tot || 1) > 0.22 && nonFelt.length / (tot || 1) > 0.30) ? nonFelt : vals;
+    pick.sort(function (a, b) { return a - b; });
+    return pick[pick.length >> 1];
   }
   // Binary ink mask of ONLY the card's red + black marks. A pixel is "ink" if it
   // is red (red channel dominant) or stands out from the background in luminance
@@ -416,9 +417,18 @@
       // while still catching two-or-more touching digits (>=~1.3x tall).
       if (r.h >= 0.55 * maxH && rw > 2.0 * digitW) {
         var k = Math.max(2, Math.round(rw / digitW));
-        for (var i = 0; i < k; i++) {
-          glyphs.push({ x0: r.x0 + Math.round(i * rw / k), x1: r.x0 + Math.round((i + 1) * rw / k) - 1 });
+        // Place the k-1 cuts at the ink VALLEYS nearest each even boundary (the
+        // thin necks where touching digits meet), not at blind equal widths, so a
+        // crop lands on a whole digit instead of the middle of two.
+        var prev = r.x0, win = Math.max(2, Math.round(digitW * 0.45));
+        for (var s = 1; s < k; s++) {
+          var target = r.x0 + Math.round(s * rw / k), bx = target, bv = Infinity;
+          for (var xx = Math.max(r.x0 + 1, target - win); xx <= Math.min(r.x1 - 1, target + win); xx++) {
+            if (col[xx] < bv) { bv = col[xx]; bx = xx; }
+          }
+          glyphs.push({ x0: prev, x1: bx - 1 }); prev = bx;
         }
+        glyphs.push({ x0: prev, x1: r.x1 });
       } else glyphs.push({ x0: r.x0, x1: r.x1 });
     });
     return glyphs;
