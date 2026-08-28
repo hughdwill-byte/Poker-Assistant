@@ -1010,21 +1010,24 @@
     emitted[key] = id;
     setSlot(reading, key, id);
   }
-  // Stabilise a numeric read on its PARSED VALUE (not the exact string): the same
-  // number segments slightly differently frame to frame (10K vs 1 0K), which kept
-  // resetting a string counter so a perfectly-read number never surfaced. A couple
-  // of blank frames are tolerated so it doesn't flicker back to "-". Sets st.stable
-  // to the value to trust, or null.
+  // Stabilise a numeric read by VOTING over the last several frames: the value it
+  // reads MOST OFTEN wins. The same number can parse differently frame to frame
+  // (a chip digit leaking in, a dropped leading digit, 10K vs 1 0K), so requiring
+  // the exact same read twice in a row left a perfectly-read number showing "-".
+  // The mode is robust to those odd frames. Sets st.stable to the value or null.
   function stabiliseNum(st, num) {
-    if (num.value != null) {
-      st.miss = 0;
-      if (st.lastVal === num.value) st.vcount = (st.vcount || 0) + 1;
-      else { st.lastVal = num.value; st.vcount = 1; }
-    } else {
-      st.miss = (st.miss || 0) + 1;
-      if (st.miss >= 3) { st.vcount = 0; st.lastVal = null; }
+    st.hist = st.hist || [];
+    st.hist.push(num.value);                 // may be null (no number that frame)
+    if (st.hist.length > 6) st.hist.shift();
+    var counts = {}, best = null, bestN = 0, nonNull = 0;
+    for (var i = 0; i < st.hist.length; i++) {
+      var v = st.hist[i]; if (v == null) continue; nonNull++;
+      counts[v] = (counts[v] || 0) + 1;
+      if (counts[v] > bestN) { bestN = counts[v]; best = v; }
     }
-    st.stable = (st.vcount >= 2) ? st.lastVal : null;
+    // Clear quickly once the number has actually gone (recent frames all blank).
+    var recentGone = st.hist.length >= 3 && st.hist.slice(-3).every(function (v) { return v == null; });
+    st.stable = (!recentGone && bestN >= 2 && bestN >= nonNull * 0.4) ? best : null;
   }
   function tick() {
     if (!grabFrame()) return;
