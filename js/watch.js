@@ -984,7 +984,18 @@
   var teachSuppressed = {}; // key -> the reading value that was skipped/re-boxed
   var unknownStreak = {};   // key -> consecutive frames a card has read "unknown"
   var numUnkStreak = {};    // numeric key -> consecutive frames it showed unknown digits
+  var numPin = {};          // numeric key -> { value, sig } value you typed, held until the box changes
   var votes = {};           // key -> { counts:{id:n}, total, topId } vote tally while unlatched
+  // When you've typed a number's value it's PINNED and shown as-is until the box's
+  // pixels change enough (a new number) - so a taught bet like 10K keeps showing
+  // 10,000 instead of the live parse turning the K back into 100.
+  function pinnedNumValue(key, img) {
+    var pin = numPin[key];
+    if (!pin) return undefined;
+    if (rms(pin.sig, signature(img).vec) < 0.7) return pin.value;   // box unchanged -> held value
+    delete numPin[key];                                              // box changed -> re-read
+    return undefined;
+  }
   // Keep re-reading a card this many frames before asking you to teach it - a
   // card is usually just missed on the first pass (mid-deal, a flip animation,
   // a moment of blur) and lands cleanly a frame or two later, so give the
@@ -1072,6 +1083,7 @@
       // last hand's numbers don't linger until they're re-read.
       reading.pot = 0; reading.toCall = 0;
       ["pot", "tocall"].forEach(function (k) { delete stab[k]; });
+      numPin = {};                                  // new round: drop pinned numbers
     }
     // Pass 2: emit each card. A latched or manually-set card HOLDS its value for
     // the whole hand (it won't flicker or revert); an unlatched spot latches the
@@ -1118,16 +1130,16 @@
     NUM_KEYS.forEach(function (key) {
       var rect = regions[key];
       if (!rect) return;
-      var num = readNumber(regionImageData(rect), key === "tocall" ? { labelText: true } : null);
+      var img = regionImageData(rect);
+      var num = readNumber(img, key === "tocall" ? { labelText: true } : null);
       var val = "num:" + num.str;
       var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
       if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
       st.num = num;
-      // Stabilise on the parsed VALUE, not the exact string: the same number often
-      // segments slightly differently frame to frame (10K vs 1 0K), which kept
-      // resetting the string counter so a perfectly-read number never surfaced. A
-      // couple of blank frames are tolerated so it doesn't flicker back to "-".
+      // A value you typed is PINNED and held until the box changes; otherwise vote.
+      var pv = pinnedNumValue(key, img);
       stabiliseNum(st, num);
+      if (pv !== undefined) st.stable = pv;
       if (st.stable != null) {
         if (key === "pot") reading.pot = st.stable;
         else if (key === "mystack") reading.stack = st.stable;
@@ -1158,14 +1170,17 @@
     BET_KEYS.forEach(function (key, bi) {
       var rect = regions[key];
       if (!rect) { betVals[bi] = undefined; return; }   // not boxed -> leave that seat untouched
-      var num = readNumber(regionImageData(rect));
+      var img = regionImageData(rect);
+      var num = readNumber(img);
       var val = "num:" + num.str;
       var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
       if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
       st.num = num;
+      var pv = pinnedNumValue(key, img);
       stabiliseNum(st, num);
-      // Show the stable value if the vote has locked, else the value read THIS
-      // frame - so a recognised bet appears right away instead of sitting on "-".
+      if (pv !== undefined) st.stable = pv;             // a value you typed -> hold it
+      // Show the stable value if pinned/voted, else the value read THIS frame - so
+      // a recognised bet appears right away instead of sitting on "-".
       var showV = st.stable != null ? st.stable : (num.value != null ? num.value : null);
       betVals[bi] = showV;
       // The call MATH uses only the settled value, so advice doesn't flicker.
@@ -1404,6 +1419,7 @@
       ignored = ignored.filter(function (g) { return g.kind !== "digit"; });
       saveJSON(LS_TEMPLATES, templates); saveJSON(LS_IGNORE, ignored);
       NUM_KEYS.concat(BET_KEYS).forEach(function (k) { delete stab[k]; });
+      numPin = {};
       setStatus("Taught numbers cleared — re-teach the digits (cards kept).");
     }));
     clear.appendChild(mkbtn("Clear seat labels", function () {
@@ -1992,7 +2008,8 @@
   function teachNumberValue(key) {
     if (!el.correct) return;
     if (!grabFrame() || !regions[key]) { setStatus("Box " + REGION_LABELS[key] + " first."); return; }
-    var num = readNumber(regionImageData(regions[key]), key === "tocall" ? { labelText: true } : null);
+    var teachImg = regionImageData(regions[key]);
+    var num = readNumber(teachImg, key === "tocall" ? { labelText: true } : null);
     var glyphs = num.glyphs || [];
     el.correct.innerHTML = "";
     el.correct.appendChild(h("div", "teach-title", "Teach " + REGION_LABELS[key] + " — type what these characters are:"));
@@ -2030,10 +2047,15 @@
         templates.push({ label: chars[i], kind: "digit", red: glyphs[i].sig.red || 0, holes: glyphs[i].sig.holes, holeY: glyphs[i].sig.holeY, vec: Array.prototype.slice.call(glyphs[i].sig.vec) });
       }
       saveJSON(LS_TEMPLATES, templates);
+      // PIN the value you typed to this box: it shows/uses that number as-is until
+      // the box's pixels change (a new bet), so it can't be re-mangled by the live
+      // parse (e.g. the K flipping back to a 0).
+      var pv = parseNumber(chars.join(""));
+      if (pv != null) numPin[key] = { value: pv, sig: Array.prototype.slice.call(signature(teachImg).vec) };
       stab[key] = null; delete numUnkStreak[key];
       closeCorrect();
-      setStatus("Learned " + chars.length + " character(s) for " + REGION_LABELS[key] +
-        (dropped ? " (fixed " + dropped + " wrong match" + (dropped === 1 ? "" : "es") + ")" : "") + " — numbers should read now.");
+      setStatus("Learned " + REGION_LABELS[key] + " = " + (pv != null ? pv.toLocaleString() : chars.join("")) +
+        (dropped ? " (fixed " + dropped + " wrong match" + (dropped === 1 ? "" : "es") + ")" : "") + " — it will hold until that box changes.");
     }
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); learn(); } });
     var row = h("div", "teach-extra");
