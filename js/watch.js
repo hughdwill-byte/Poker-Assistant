@@ -1018,7 +1018,7 @@
   function stabiliseNum(st, num) {
     st.hist = st.hist || [];
     st.hist.push(num.value);                 // may be null (no number that frame)
-    if (st.hist.length > 6) st.hist.shift();
+    if (st.hist.length > 9) st.hist.shift();
     var counts = {}, best = null, bestN = 0, nonNull = 0;
     for (var i = 0; i < st.hist.length; i++) {
       var v = st.hist[i]; if (v == null) continue; nonNull++;
@@ -1027,7 +1027,10 @@
     }
     // Clear quickly once the number has actually gone (recent frames all blank).
     var recentGone = st.hist.length >= 3 && st.hist.slice(-3).every(function (v) { return v == null; });
-    st.stable = (!recentGone && bestN >= 2 && bestN >= nonNull * 0.4) ? best : null;
+    // Surface the most-common recent value once it's appeared at least twice and
+    // leads the other reads - lenient enough that a value the reader gets right
+    // most frames (even with the odd chip-leak misread) shows and holds.
+    st.stable = (!recentGone && bestN >= 2 && bestN >= nonNull * 0.3 && bestN >= (nonNull - bestN)) ? best : null;
   }
   function tick() {
     if (!grabFrame()) return;
