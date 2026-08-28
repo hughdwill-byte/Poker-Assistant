@@ -1164,9 +1164,12 @@
       if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
       st.num = num;
       stabiliseNum(st, num);
-      var v = st.stable;                                   // stable value (null = boxed but no bet yet)
-      betVals[bi] = v;
-      if (v != null && (highBet == null || v > highBet)) highBet = v;
+      // Show the stable value if the vote has locked, else the value read THIS
+      // frame - so a recognised bet appears right away instead of sitting on "-".
+      var showV = st.stable != null ? st.stable : (num.value != null ? num.value : null);
+      betVals[bi] = showV;
+      // The call MATH uses only the settled value, so advice doesn't flicker.
+      if (st.stable != null && (highBet == null || st.stable > highBet)) highBet = st.stable;
       // Teach unknown bet digits too (shared with Pot/Stack/Call).
       if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
       else delete numUnkStreak[key];
@@ -1790,8 +1793,9 @@
     NUM_KEYS.forEach(function (key) {
       if (!regions[key]) return;
       var st = stab[key];
-      // Prefer the STABLE held value so a one-frame wobble doesn't blank it.
-      var held = st && st.stable != null ? st.stable : null;
+      // Prefer the STABLE held value; else show the value read this frame, so a
+      // recognised number appears immediately instead of "?".
+      var held = st && st.stable != null ? st.stable : (st && st.num && st.num.value != null ? st.num.value : null);
       var txt = held != null ? held.toLocaleString()
         : (st && st.num ? (key === "tocall" && st.num.str === "" ? "check" : (st.num.str || "?")) : "…");
       var chip = h("span", "strip-num clickable" + (held == null && st && st.num && !(key === "tocall" && st.num.str === "") ? " q" : ""),
