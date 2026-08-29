@@ -459,10 +459,15 @@
   // Rule: a single separator before a K/M suffix is a decimal point (1.4M);
   // all other separators are thousands groupers (990,000 / 1.234.567).
   function parseNumber(str) {
-    if (!str || str.indexOf("?") >= 0) return null;
+    if (!str) return null;
+    // A "K" means the number it follows is in thousands (5K = 5,000), "M" millions.
+    // Take the digits BEFORE the first K/M and multiply - so a stray glyph read
+    // after the K (e.g. "10K." or "5K0") can't turn 10K into 100. If there's no
+    // K/M the whole string is the number.
     var mult = 1, s = str;
-    var suf = s.match(/[KM]$/i);
-    if (suf) { mult = suf[0].toUpperCase() === "M" ? 1e6 : 1e3; s = s.slice(0, -1); }
+    var m = str.match(/[KM]/i);
+    if (m) { mult = m[0].toUpperCase() === "M" ? 1e6 : 1e3; s = str.slice(0, m.index); }
+    if (s.indexOf("?") >= 0) return null;
     var seps = (s.match(/\./g) || []).length;
     var digits = s.replace(/\./g, "");
     if (digits === "" || !/^[0-9]+$/.test(digits)) return null;
@@ -986,15 +991,24 @@
   var numUnkStreak = {};    // numeric key -> consecutive frames it showed unknown digits
   var numPin = {};          // numeric key -> { value, sig } value you typed, held until the box changes
   var votes = {};           // key -> { counts:{id:n}, total, topId } vote tally while unlatched
-  // When you've typed a number's value it's PINNED and shown as-is until the box's
-  // pixels change enough (a new number) - so a taught bet like 10K keeps showing
-  // 10,000 instead of the live parse turning the K back into 100.
-  function pinnedNumValue(key, img) {
+  // When you've typed a number's value it's PINNED and shown as-is. It's released
+  // only when the LIVE read gives a DIFFERENT value for several frames in a row (a
+  // genuinely new number) - NOT on pixel wobble, so an animated chip on the bet
+  // pill can't drop it, and the flaky parse (K flipping to a 0) can't override it.
+  function pinnedNumValue(key, stableVal) {
     var pin = numPin[key];
     if (!pin) return undefined;
-    if (rms(pin.sig, signature(img).vec) < 0.7) return pin.value;   // box unchanged -> held value
-    delete numPin[key];                                              // box changed -> re-read
-    return undefined;
+    // Release only when the SETTLED (voted) read is a different number for a few
+    // frames - since it reads correctly most of the time, a settled different
+    // value means the number genuinely changed. Odd misreads never settle, so
+    // they can't drop the pin.
+    if (stableVal != null && stableVal !== pin.value) {
+      pin.diff = (pin.diff || 0) + 1;
+      if (pin.diff >= 3) { delete numPin[key]; return undefined; }
+    } else {
+      pin.diff = 0;
+    }
+    return pin.value;
   }
   // Keep re-reading a card this many frames before asking you to teach it - a
   // card is usually just missed on the first pass (mid-deal, a flip animation,
@@ -1042,6 +1056,35 @@
     // leads the other reads - lenient enough that a value the reader gets right
     // most frames (even with the odd chip-leak misread) shows and holds.
     st.stable = (!recentGone && bestN >= 2 && bestN >= nonNull * 0.3 && bestN >= (nonNull - bestN)) ? best : null;
+  }
+  // The value to SHOW for any number box (pot / stack / call / my bet / opponents'
+  // bets all use this same rule): the settled/pinned value if we have one, else the
+  // value read THIS frame, so a recognised number appears immediately instead of
+  // sitting on "-". Every number region is treated identically.
+  function numShow(st) {
+    if (!st) return null;
+    if (st.stable != null) return st.stable;
+    return st.num && st.num.value != null ? st.num.value : null;
+  }
+  // Read + stabilise + honour the pin for one numeric region, exactly the same way
+  // for the pot, the stack, the call button, my bet and every opponent bet box.
+  // Sets stab[key] and returns it (or null when the box isn't traced). Shared so
+  // the bets behave identically to the pot/stack and share the same taught digits.
+  function readNumRegion(key, opts) {
+    var rect = regions[key];
+    if (!rect) return null;
+    var num = readNumber(regionImageData(rect), opts);
+    var val = "num:" + num.str;
+    var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
+    if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
+    st.num = num;
+    stabiliseNum(st, num);                     // vote across recent frames
+    var pv = pinnedNumValue(key, st.stable);   // a value you typed holds until the settled read really changes
+    if (pv !== undefined) st.stable = pv;
+    // Track how long it has shown unknown digits, so we can prompt to teach.
+    if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
+    else delete numUnkStreak[key];
+    return st;
   }
   function tick() {
     if (!grabFrame()) return;
@@ -1128,18 +1171,9 @@
     });
     // Numeric regions (pot / my stack / to-call button) via digit OCR.
     NUM_KEYS.forEach(function (key) {
-      var rect = regions[key];
-      if (!rect) return;
-      var img = regionImageData(rect);
-      var num = readNumber(img, key === "tocall" ? { labelText: true } : null);
-      var val = "num:" + num.str;
-      var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
-      if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
-      st.num = num;
-      // A value you typed is PINNED and held until the box changes; otherwise vote.
-      var pv = pinnedNumValue(key, img);
-      stabiliseNum(st, num);
-      if (pv !== undefined) st.stable = pv;
+      var st = readNumRegion(key, key === "tocall" ? { labelText: true } : null);
+      if (!st) return;
+      var num = st.num;
       if (st.stable != null) {
         if (key === "pot") reading.pot = st.stable;
         else if (key === "mystack") reading.stack = st.stable;
@@ -1148,13 +1182,6 @@
         if (!num.amountPresent) reading.toCall = 0;            // genuine CHECK - no amount
         else reading.toCallPending = true;                    // a bet we can't read yet
       }
-      // Prompt to teach any unknown digit (pot / stack / call button share digits).
-      // Use a persistence streak, NOT exact-string stability: the call button's
-      // segmentation wobbles frame to frame (different count of "?"), which kept
-      // resetting st.count so the prompt never appeared. Instead, once a box has
-      // shown unknown digits for a couple of frames, surface the leftmost one.
-      if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
-      else delete numUnkStreak[key];
       // For the call button, only auto-prompt when there's an AMOUNT (a distinct
       // number group after the word, e.g. CALL 10K) so a word-only CHECK button
       // never asks you to teach its letters. Pot/Stack always prompt. Either way,
@@ -1168,27 +1195,15 @@
     // bet; if the call button isn't boxed, that's the price to call.
     var highBet = null, betVals = [];
     BET_KEYS.forEach(function (key, bi) {
-      var rect = regions[key];
-      if (!rect) { betVals[bi] = undefined; return; }   // not boxed -> leave that seat untouched
-      var img = regionImageData(rect);
-      var num = readNumber(img);
-      var val = "num:" + num.str;
-      var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
-      if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
-      st.num = num;
-      var pv = pinnedNumValue(key, img);
-      stabiliseNum(st, num);
-      if (pv !== undefined) st.stable = pv;             // a value you typed -> hold it
-      // Show the stable value if pinned/voted, else the value read THIS frame - so
-      // a recognised bet appears right away instead of sitting on "-".
-      var showV = st.stable != null ? st.stable : (num.value != null ? num.value : null);
-      betVals[bi] = showV;
+      var st = readNumRegion(key, null);                // SAME pipeline as pot/stack/my bet
+      if (!st) { betVals[bi] = undefined; return; }     // not boxed -> leave that seat untouched
+      // Show the settled/pinned value, else the value read this frame - exactly the
+      // rule pot/stack use, so a recognised bet appears immediately.
+      betVals[bi] = numShow(st);
       // The call MATH uses only the settled value, so advice doesn't flicker.
       if (st.stable != null && (highBet == null || st.stable > highBet)) highBet = st.stable;
-      // Teach unknown bet digits too (shared with Pot/Stack/Call).
-      if (num.unknowns.length) numUnkStreak[key] = (numUnkStreak[key] || 0) + 1;
-      else delete numUnkStreak[key];
-      if ((numUnkStreak[key] || 0) >= 2) unknowns.push({ key: key, kind: "digit", img: num.unknowns[0].img, sig: num.unknowns[0].sig });
+      // Teach unknown bet digits too (shared with Pot/Stack/Call/My bet).
+      if ((numUnkStreak[key] || 0) >= 2) unknowns.push({ key: key, kind: "digit", img: st.num.unknowns[0].img, sig: st.num.unknowns[0].sig });
     });
     if (BET_KEYS.some(function (k) { return regions[k]; })) reading.bets = betVals;   // show opponents' bets on the main page
     // Price to call FROM THE BETS on the table: the highest opponent bet minus
@@ -1198,8 +1213,8 @@
     // decide the call and the button is ignored.
     var betBoxed = BET_KEYS.some(function (k) { return regions[k]; });
     if (betBoxed) {
-      var myBet = 0, mbSt = stab.mybet;
-      if (regions.mybet && mbSt && mbSt.count >= 2 && mbSt.num && mbSt.num.value != null) myBet = mbSt.num.value;
+      var myBet = 0;
+      if (regions.mybet) { var mv = numShow(stab.mybet); if (mv != null) myBet = mv; }
       reading.toCall = (highBet != null && highBet > myBet) ? (highBet - myBet) : 0;
       reading.toCallPending = false;
     } else if (highBet != null && reading.toCall === undefined) {
@@ -1811,7 +1826,7 @@
       var st = stab[key];
       // Prefer the STABLE held value; else show the value read this frame, so a
       // recognised number appears immediately instead of "?".
-      var held = st && st.stable != null ? st.stable : (st && st.num && st.num.value != null ? st.num.value : null);
+      var held = numShow(st);
       var txt = held != null ? held.toLocaleString()
         : (st && st.num ? (key === "tocall" && st.num.str === "" ? "check" : (st.num.str || "?")) : "…");
       var chip = h("span", "strip-num clickable" + (held == null && st && st.num && !(key === "tocall" && st.num.str === "") ? " q" : ""),
@@ -1823,7 +1838,7 @@
     // Opponents' bets, with the highest (the current bet) marked. Click to teach.
     var betBoxedKeys = BET_KEYS.filter(function (key) { return regions[key]; });
     if (betBoxedKeys.length) {
-      var betVals = betBoxedKeys.map(function (key) { var st = stab[key]; return st && st.stable != null ? st.stable : null; });
+      var betVals = betBoxedKeys.map(function (key) { return numShow(stab[key]); });
       var hi = betVals.reduce(function (m, v) { return v != null && (m == null || v > m) ? v : m; }, null);
       betBoxedKeys.forEach(function (key, i) {
         var v = betVals[i], isHi = v != null && v === hi;
@@ -2051,7 +2066,7 @@
       // the box's pixels change (a new bet), so it can't be re-mangled by the live
       // parse (e.g. the K flipping back to a 0).
       var pv = parseNumber(chars.join(""));
-      if (pv != null) numPin[key] = { value: pv, sig: Array.prototype.slice.call(signature(teachImg).vec) };
+      if (pv != null) numPin[key] = { value: pv, diff: 0 };
       stab[key] = null; delete numUnkStreak[key];
       closeCorrect();
       setStatus("Learned " + REGION_LABELS[key] + " = " + (pv != null ? pv.toLocaleString() : chars.join("")) +
