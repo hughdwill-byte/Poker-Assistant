@@ -77,12 +77,15 @@ throws until enabled). Neither feeds a recommendation.
   MDF is used only where population data supports near-optimal defense.
 
 ### 6. Mixed-strategy / frequency output
-- **Why:** near equilibrium the right answer is "raise X%, call Y%", not one
-  action.
-- **Hook:** change the `EVResult` contract in `strategy.js` to emit a frequency
-  vector; the UI already renders an EV table and could show mixes.
-- **Needs first:** an indifference/solver layer to produce frequencies; without
-  it, invented mixes are worse than an honest single best-EV action.
+- **Status:** **shipped for the range-plan (Phase C, Wave 1.4).**
+  `BetComposition.plan()` now returns `heroMix` for the hero's actual hand: a
+  value hand bets 100%; surplus air bluffs at the indifference frequency
+  `targetBluffWeight / airWeight` and checks the rest; medium hands check. The
+  Range-vs-range card shows "bet X% / check Y%" per size. This is grounded in
+  the balanced-range construction (an indifference argument), not invented.
+- **Remaining:** frequencies for the FACING-A-BET decision (call/raise/fold
+  mixes) and a full solver layer; today mixes apply to the hero-as-bettor plan
+  and are shown alongside — not inside — the EV recommendation.
 
 ### 7. Polarisation & optimal bluff-to-value ratios
 - **Status:** **shipped (Phase C, Wave 1.2)** as `js/bet-composition.js`.

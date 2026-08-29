@@ -340,3 +340,13 @@ unblocks their folds. `plan()` then picks the highest-scoring air (tie-broken by
 lowest equity). Heads-up the Range-vs-range card labels the plan
 "(blocker-aware bluffs)". Value-side blocker effects and multiway remain
 deferred.
+
+**Mixed-strategy frequency (Wave 1.4, #6).** `plan()` returns `heroMix` for the
+hero's actual hand: a value hand bets 100%; an air hand bluffs at the
+indifference frequency `min(1, targetBluffWeight / airWeight)` and checks the
+rest (when the range holds more air than the balance needs, each air combo
+bluffs only part of the time); a medium hand checks. The card shows
+"bet X% / check Y%" per size. The frequency is grounded in the balanced-range
+construction (an indifference argument), not invented — and it too is shown
+alongside, never inside, the EV recommendation. Frequencies for the
+facing-a-bet decision (call/raise/fold mixes) are deferred (#6 remainder).

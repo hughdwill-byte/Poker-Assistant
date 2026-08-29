@@ -109,14 +109,31 @@
     var betWeight = valueWeight + bluffWeight;
     var totalWeight = valueWeight + bluffWeight + checkWeight;
 
-    // Where does the hero's actual hand play?
-    var heroRole = null;
+    var airWeight = sumW(air);
+
+    // Where does the hero's actual hand play, and at what FREQUENCY (#6)?
+    // A value hand bets every time. Air is a mixed bluff: when there is more air
+    // than the balance needs, each air combo bluffs at the indifference
+    // frequency targetBluffWeight / airWeight and checks the rest of the time
+    // (blocker-preferred air sits at the higher end of that mix). Medium hands
+    // with showdown value check (or bluff-catch).
+    var heroRole = null, heroMix = null;
     if (cfg.heroActual && cfg.heroActual.length === 2 && cfg.heroActual[0] != null && cfg.heroActual[1] != null) {
       var hk = Math.min(cfg.heroActual[0], cfg.heroActual[1]) + "_" + Math.max(cfg.heroActual[0], cfg.heroActual[1]);
       var inList = function (list) { for (var j = 0; j < list.length; j++) if (keyOf(list[j]) === hk) return true; return false; };
+      var heroEq = null;
+      for (var m = 0; m < combos.length; m++) { if (keyOf(combos[m]) === hk) { heroEq = combos[m].equity; break; } }
       if (inList(value)) heroRole = "value";
       else if (inList(bluff)) heroRole = "bluff";
       else if (inList(check)) heroRole = "check";
+      if (heroRole === "value") {
+        heroMix = { kind: "value", betFreq: 1, checkFreq: 0 };
+      } else if (heroRole && heroEq != null && heroEq <= bluffMaxEquity) {
+        var f = airWeight > 0 ? Math.min(1, targetBluffWeight / airWeight) : 0;
+        heroMix = { kind: "bluff", betFreq: f, checkFreq: 1 - f };
+      } else if (heroRole) {
+        heroMix = { kind: "showdown", betFreq: 0, checkFreq: 1 };
+      }
     }
 
     var EQ = Poker.Equilibrium;
@@ -133,6 +150,9 @@
       bluffShortfall: Math.max(0, targetBluffWeight - bluffWeight), // not enough air to balance
       valueToBluff: bluffWeight > 0 ? valueWeight / bluffWeight : Infinity,
       heroRole: heroRole,
+      heroMix: heroMix,
+      airWeight: airWeight,
+      targetBluffWeight: targetBluffWeight,
       blockerAware: blockerAware,
       P: P, B: B,
     };

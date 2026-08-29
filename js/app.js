@@ -611,9 +611,15 @@
         var pl = P.BetComposition.plan({ combos: h.combos, P: rvrPot, B: s.B, heroActual: heroCards, opponentCombos: oppCombos });
         if (!pl.ok) return null;
         var roleTxt = pl.heroRole ? pl.heroRole.toUpperCase() : "—";
-        var bluffPct = (pl.actualBluffFractionOfBets * 100).toFixed(0);
-        var shortfall = pl.bluffShortfall > 1e-6 ? " (range short of bluffs)" : "";
-        return { label: s.label, role: roleTxt, bluffPct: bluffPct, shortfall: shortfall };
+        // Mixed-strategy frequency for the hero hand (#6): bet% vs check%.
+        var freqTxt = "";
+        if (pl.heroMix) {
+          var bf = Math.round(pl.heroMix.betFreq * 100);
+          if (pl.heroMix.kind === "value") freqTxt = "bet 100%";
+          else if (pl.heroMix.kind === "bluff") freqTxt = "bet " + bf + "% / check " + (100 - bf) + "%";
+          else freqTxt = "check 100%";
+        }
+        return { label: s.label, role: roleTxt, freq: freqTxt };
       }).filter(Boolean);
       if (lines.length) {
         var wrap = document.createElement("div");
@@ -621,7 +627,7 @@
         wrap.innerHTML = '<div class="gto-title">Balanced bet plan — your hand plays as' + (oppCombos ? " (blocker-aware bluffs)" : "") + "</div>" +
           lines.map(function (l) {
             return '<div class="gto-row"><span>' + l.label + '</span><b class="role-' + l.role.toLowerCase() + '">' + l.role + "</b>" +
-              '<span class="plan-bluff">' + l.bluffPct + "% bluffs" + l.shortfall + "</span></div>";
+              '<span class="plan-bluff">' + l.freq + "</span></div>";
           }).join("");
         $("rvr-stats").appendChild(wrap);
       }
