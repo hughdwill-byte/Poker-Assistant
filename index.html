@@ -116,6 +116,18 @@
             </select>
           </div>
           <div class="field">
+            <label for="in-gamemode">Game type</label>
+            <select id="in-gamemode">
+              <option value="play-money" selected>Play money (no rake)</option>
+              <option value="cash">Cash (rake applies)</option>
+              <option value="tournament">Tournament (chip EV, no rake)</option>
+            </select>
+          </div>
+          <div class="field-row" id="rake-fields" hidden>
+            <div class="field"><label for="in-rakepct">Rake %</label><input id="in-rakepct" type="number" inputmode="decimal" min="0" max="15" step="0.5" value="5" /></div>
+            <div class="field"><label for="in-rakecap">Rake cap (0 = none)</label><input id="in-rakecap" type="number" inputmode="numeric" min="0" step="1" value="0" /></div>
+          </div>
+          <div class="field">
             <label for="in-range-source">Opponent range (applied to active opponents)</label>
             <select id="in-range-source">
               <option value="uniform" selected>Uniform — any two cards (versus random)</option>
@@ -225,6 +237,8 @@
   <script src="js/opponent-model.js"></script>
   <script src="js/range-equity.js"></script>
   <script src="js/action-ev.js"></script>
+  <script src="js/draw-odds.js"></script>
+  <script src="js/tournament-icm.js"></script>
   <script src="js/strategy.js"></script>
   <script src="js/watch-inference.js"></script>
   <script src="js/persistence.js"></script>

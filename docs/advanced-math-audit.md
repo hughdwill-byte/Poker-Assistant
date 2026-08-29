@@ -118,3 +118,71 @@ refinements (mode-vote OCR, pinned values) layered on top of the same
 preserved. The `player.stack`/`player.bet` fields already exist on each
 player object, so the upgrade extends the player record rather than
 replacing it.
+
+---
+
+# Part 2 — Coverage vs the Texas Hold'em Mathematics brief
+
+Audit of the checkout against `texas_holdem_math_claude_code.md` (spec v1.0).
+Baseline before this pass: `npm test` → **195 passed, 0 failed**. After this
+pass: **221 passed, 0 failed**.
+
+Legend: ✅ implemented & tested · ➕ added this pass · 📄 documented-only
+(deferred, see `docs/future-math-roadmap.md`) · ⛔ intentionally not built.
+
+| Spec § | Item | Status | Where |
+|---|---|---|---|
+| 2.1 | Card representation, uniqueness | ✅ | `cards.js`, `game-state.js` validate |
+| 2.2 | Best-5-of-7 evaluator, total order, wheel | ✅ (preserved) | `evaluator.js` |
+| 2.3 / T20-T21 | Side pots by contribution levels; eligibility; uncalled excess returned | ✅ | `game-state.js buildSidePots`, `action-ev.js sidePotExpectation` |
+| 3.1 / T02-T03 | 1,326 combos; 6/4/12 class counts | ✅ | `ranges.js`, `ranges.test.js` |
+| 3.2 / T04 | Blockers / card removal (KQ on KT4 → 8 AK) | ✅ | `ranges.js removeBlockers` |
+| 3.3 / 12.1 / T24 | Weighted ranges; Bayesian update `w'∝w·P(a|h)` | ✅ | `ranges.js`, `opponent-model.js updateRange` |
+| 3.4 / T07 | 7-card category distribution regression | ✅ | `hand-features` via evaluator (counts checked in evaluator tests) |
+| 4.1 / T08-T09 | Outs probabilities (next card; by river all-in) | ➕ | `draw-odds.js`, `rake-and-refs.test.js` |
+| 4.2 | Common nominal outs table | 📄 | reference in `draw-odds.js` docs |
+| 5 / 17.2 / T25,T30 | Range equity; exact vs MC; seeded RNG; collision rejection; CI | ✅ | `range-equity.js`, `range-equity.test.js` |
+| 6 / T10-T12 | Pot odds `C/(P+C)`; `EV_call=E(P+C)−C` | ✅ | `action-ev.js`, `action-ev.test.js` |
+| 6.2 | **Rake** subtracted from won pot; per-side-pot EV | ➕ | `action-ev.js rake`, `rake-and-refs.test.js` |
+| 7.1 | Sunk-cost accounting (`−C`, not total) | ✅ | `action-ev.js`, T28 in `action-ev.test.js` |
+| 7.2 / T12 | Call/bet/raise EV formulas | ✅ | `action-ev.js` |
+| 7.3 | Outcome-tree (branch) EV | ✅ | `action-ev.js evFromBranches` |
+| 7.4 | Sklansky $ / G-bucks (labels over ordinary EV) | ✅ (delta vs range equity) | `range-equity.js` |
+| 8.1 / T13-T14 | Pure-bluff break-even folds `B/(P+B)` | ➕ | `action-ev.js breakEvenFoldForBluff` |
+| 8.3 / T15 | Two-branch required folds `−Vc/(P−Vc)` (4-bet 63.94%) | ➕ | `action-ev.js requiredFoldFrequency` |
+| 8.4 | MDF `P/(P+B)`, ideal bluff fraction `B/(P+2B)` (reference only) | ➕ | `action-ev.js minDefenseFrequency`, `idealBluffFraction` |
+| 8.5 | Multiway fold `∏fᵢ` (independent approximation, labelled) | ✅ | `strategy.js combinedResponse` |
+| 9.1-9.2 | Implied / reverse-implied odds (branch `W_min`) | 📄 | roadmap #2 |
+| 9.3 / T18 | Set-mining probability 11.7551% | ➕ | `draw-odds.js flopSetProbability` |
+| 9.3 note | raw vs realized equity | 📄 | roadmap #1 |
+| 10.1-10.2 / T16 | Effective stack; SPR `stack/pot` | ✅ | `game-state.js effectiveStack/spr` |
+| 10.3 / T17 | Geometric multi-street sizing helper | ➕ (helper only, not wired) | `draw-odds.js geometricBetFraction`; roadmap #10 |
+| 10.4 | Pot commitment is an EV result | ✅ | `strategy.js` ranks vs fold=0 |
+| 11 | Bet sizing as EV optimisation over candidates | ✅ | `strategy.js` candidate ladder + EV ranking |
+| 11.4 | Rake-aware thresholds | ➕ | rake netted per candidate in `strategy.js` |
+| 12.1 | Bayesian range update | ✅ | `opponent-model.js` |
+| 12.4 | Beta-binomial stats with denominators | ✅ | `opponent-model.js stats` |
+| 12.5 | Model confidence & sensitivity | ✅ (confidence) / 📄 (full sweeps) | `strategy.js` confidence; roadmap #6 |
+| 13.2 | Board-texture features | ✅ | `hand-features.js boardTexture` |
+| 13.x | Play templates, theorems, WA/WB, range advantage | 📄 | roadmap #3,#4,#7 |
+| 14 / T22-T23 | ICM, ROI, cEV vs $EV | 📄 (disabled stub) | `tournament-icm.js` stub; roadmap #12 |
+| 15 | Winrate / variance / bankroll | ⛔ (out of scope; operator layer) | — |
+| 17.4 / T27 | Legal actions, min-raise, short all-in reopen | ✅ | `game-state.js`, `game-state.test.js` |
+| 17.5 / T26 | Probability checks (sum-to-1, no negatives) | ✅ | `ranges.js validate`, model normalisation |
+
+## Gaps closed this pass
+
+- **Rake-adjusted EV** (§6.2, §11.4): implemented as a pure function, netted
+  from every showdown branch, gated by game mode, wired into the strategy and a
+  cash/rake UI, and tested (including the "not raked on uncalled" rule).
+- **Deterministic reference formulas** the brief asserts (T08, T09, T13, T14,
+  T15, T17, T18) plus MDF/ideal-bluff references — added as pure functions with
+  tests. These are exposed for explanation; they are **not** wired to override
+  the EV engine or the opponent-model fold estimate.
+
+## Deliberately deferred (documented, not wired)
+
+Everything marked 📄 above is described in `docs/future-math-roadmap.md` with a
+hook point and prerequisites. Only trivial, safe, disabled stubs were added
+(the geometric size helper and a disabled ICM interface); no unvalidated model
+feeds a live recommendation.

@@ -66,6 +66,9 @@
     var warnings = [], assumptions = [], explanation = [];
     var P = Math.max(0, dc.P || 0), C = Math.max(0, dc.C || 0);
     var multiway = opponents.length > 1;
+    // Cash-game rake context; rake() returns 0 for play-money/tournament or 0%.
+    var rakeCtx = { rakePercent: dc.rakePercent || 0, rakeCap: dc.rakeCap || 0, mode: dc.mode || "play-money" };
+    dc._rakeCtx = rakeCtx;
 
     if (!dc.heroCards || dc.heroCards.length !== 2) {
       return { mode: "range-ev", error: "Hero cards are required for range strategy." };
@@ -98,7 +101,7 @@
     // ---- Facing a bet: fold / call / raise --------------------------------
     if (C > 0) {
       evByAction.push({ action: "FOLD", amount: 0, raiseTo: null, ev: 0, confidence: 0.99 });
-      var evc = EV.evCall(P, C, e);
+      var evc = EV.evCall(P, C, e, rakeCtx);
       evByAction.push({ action: "CALL", amount: round(Math.min(C, dc.heroStackBehind || C)), raiseTo: null, ev: round(evc, 1), confidence: confidence });
       // Raise candidates.
       if (dc.legalTypes ? dc.legalTypes.canRaise : true) {
@@ -107,7 +110,9 @@
       assumptions.push("Break-even to call " + round(C) + " into " + round(P) + " is " + (breakEven * 100).toFixed(1) + "%.");
     } else {
       // ---- Unbet: check / bet ---------------------------------------------
-      var evCheck = e * P; // realise equity in the current pot (one-decision approx)
+      // Realise equity in the current pot at showdown (one-decision approx),
+      // net of the rake charged on the fraction of the pot the hero wins.
+      var evCheck = e * P - e * EV.rake(P, rakeCtx);
       evByAction.push({ action: "CHECK", amount: 0, raiseTo: null, ev: round(evCheck, 1), confidence: confidence });
       if (dc.legalTypes ? dc.legalTypes.canBet : true) {
         addBetCandidates(dc, opponents, P, e, evByAction, warnings, multiway, confidence);
@@ -120,6 +125,7 @@
     var second = evByAction[1];
     best.evGap = second && best.ev != null && second.ev != null ? round(best.ev - second.ev, 1) : null;
 
+    if (EV.rake(100, rakeCtx) > 0) assumptions.push("Cash-game rake applied to showdown pots: " + (rakeCtx.rakePercent * 100).toFixed(1) + "%" + (rakeCtx.rakeCap ? " capped at " + rakeCtx.rakeCap : " (uncapped)") + "; uncalled/fold-branch wins are not raked.");
     if (multiway) assumptions.push("Multiway aggressive-action EV uses a one-decision approximation (no future streets, single response round).");
     assumptions.push("Opponent ranges are MODELLED, not known - a modelled range, not a read on the exact cards.");
     if (eqRes.mode === "montecarlo") assumptions.push("Equity is simulated (" + (eqRes.trialsAccepted || 0) + " deals); the 95% CI is [" + (ci[0] * 100).toFixed(1) + "%, " + (ci[1] * 100).toFixed(1) + "%].");
@@ -204,11 +210,13 @@
       var B = tg.to - (dc.heroStreetCommitted || 0);
       var ev;
       if (!multiway) {
-        ev = EV.evBet(P, B, resp.fold, eCalled);
+        ev = EV.evBet(P, B, resp.fold, eCalled, dc._rakeCtx);
       } else {
-        // One-decision multiway approximation: all-fold wins P; otherwise
-        // treat the called mass as a single showdown for P + 2B (labelled).
-        ev = resp.fold * P + (1 - resp.fold) * (eCalled * (P + 2 * B) - B);
+        // One-decision multiway approximation: all-fold wins P (no rake, no
+        // showdown); otherwise treat the called mass as a single showdown for
+        // P + 2B (rake charged on the pot the hero wins).
+        var potM = P + 2 * B;
+        ev = resp.fold * P + (1 - resp.fold) * (eCalled * potM - B - eCalled * EV.rake(potM, dc._rakeCtx));
       }
       evByAction.push({ action: "BET", amount: round(B), raiseTo: round(tg.to), ev: round(ev, 1), foldEquity: round(resp.fold, 3), equityWhenCalled: round(eCalled, 3), label: tg.label, confidence: multiway ? baseConf * 0.7 : baseConf });
     });
@@ -230,7 +238,7 @@
         { prob: resp.fold, type: "fold", oppAdditional: 0 },
         { prob: 1 - resp.fold, type: "call", heroAdditional: heroAdd, oppAdditional: oppAdd, branchEquity: eCalled },
       ];
-      var ev = EV.evFromBranches(P, branches);
+      var ev = EV.evFromBranches(P, branches, dc._rakeCtx);
       evByAction.push({ action: "RAISE", amount: round(heroAdd), raiseTo: round(tg.to), ev: round(ev, 1), foldEquity: round(resp.fold, 3), equityWhenCalled: round(eCalled, 3), label: tg.label, confidence: multiway ? baseConf * 0.7 : baseConf });
     });
     if (!dc._reraiseModelled) warnings.push("Re-raise branch is not modelled; raise EV assumes opponents only fold or call (confidence reduced).");

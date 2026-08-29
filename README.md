@@ -234,6 +234,7 @@ and `C` is your additional call cost.
 | **EV of a bet `B`** | `F·P + (1−F)·(eCalled·(P + 2B) − B)` | value of betting, folds + called |
 | **Effective stack** | `min(hero, opponent)` total chips | how deep the decision really is |
 | **SPR** | `stackBehind / P` | stack-to-pot ratio |
+| **Rake (cash only)** | `min(pot·%, cap)` on the **won** pot | reduces call/bet/raise EV; 0 in play-money/tournament |
 
 Worked numbers (all in [`test/action-ev.test.js`](test/action-ev.test.js)):
 `P=100, C=50, e=1/3 → EV_call = 0`; `e=0.40 → EV_call = 10`;
@@ -279,10 +280,20 @@ used and every range result carries a **95% confidence interval**, standard
 error, and accepted/rejected sample counts. Outputs are rounded to the precision
 the interval supports — the app never claims accuracy the CI does not justify.
 
+### Rake (cash games)
+
+In **Advanced mode** you can set the game type to *cash* and enter a rake
+percentage and cap. Rake is `min(pot·%, cap)`, charged **only on a pot actually
+won at showdown** — never on uncalled chips or a fold-branch win — and netted
+out of every call/bet/raise EV. It is **0 in play-money and tournament** modes,
+so the default behaviour is unchanged. See
+[docs/math-specification.md §6a](docs/math-specification.md).
+
 Full derivations: [docs/math-specification.md](docs/math-specification.md),
 [docs/game-state-schema.md](docs/game-state-schema.md),
-[docs/opponent-model.md](docs/opponent-model.md), and the pre-upgrade
-[audit](docs/advanced-math-audit.md).
+[docs/opponent-model.md](docs/opponent-model.md), the pre-upgrade + brief-coverage
+[audit](docs/advanced-math-audit.md), and the deferred-factor
+[roadmap](docs/future-math-roadmap.md).
 
 ### Verified against known probabilities
 

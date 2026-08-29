@@ -89,6 +89,37 @@ E[chips] = Σ_layer  amount(layer) · heroShare(layer)     for layers the hero i
 Layers the hero cannot win contribute 0 (`ActionEV.sidePotExpectation`). Folded
 players' chips stay in the pot but they win no layer.
 
+## 6a. Rake-adjusted EV (cash games)
+
+Cash-game rake is a pure function of the pot it is charged on:
+
+```
+rake(pot) = min(pot · rakePercent, rakeCap)          // rakeCap 0 = uncapped
+```
+
+Rake is gated by `game.mode`: it is **0 for play-money and tournament** play,
+and applied only in `cash` mode (`js/action-ev.js rake`). It is charged **only
+on a pot that is actually won at showdown**, never on chips returned uncalled
+and never on a fold-branch win (no showdown, "no drop"). Because the hero only
+collects the pot a fraction `e` of the time, expected rake is netted against the
+hero's share:
+
+```
+EV_call  = e·(P + C) − C − e·rake(P + C)
+EV_bet   = F·P + (1 − F)·[ e_called·(P + 2B) − B − e_called·rake(P + 2B) ]
+EV_branch(call/raise) = e·pot − heroAdditional − e·rake(pot)
+EV_branch(fold)       = P + opponentAlreadyIn            // no rake, no showdown
+```
+
+Worked check (`test/rake-and-refs.test.js`): `P=100, B=50, F=0.5,
+e_called=0.6`, 5% uncapped rake → the fold branch wins 100 unraked, the called
+pot 200 is raked 10 → `EV_bet = 0.5·100 + 0.5·(0.6·200 − 50 − 0.6·10) = 82`
+(vs 85 with no rake). With `rakePercent = 0` or a non-cash mode every EV equals
+the un-raked formula exactly, so the zero-rake path is unchanged.
+
+Rake is applied **per terminal pot**, so with side pots each layer is raked on
+the amount the hero wins from that layer.
+
 ## 7. Effective stack and SPR
 
 ```
@@ -145,3 +176,34 @@ Bayesian updates (`js/opponent-model.js`, `js/range-presets.js`), not the output
 of an equilibrium solver. Nothing here is labelled "GTO". The strategy names
 used are "Range/EV strategy", "model-adjusted recommendation" and
 "showdown-equity recommendation".
+
+## 12. Deterministic reference formulas
+
+These exact formulas from the source specification are implemented as pure
+functions for explanation and regression, and are **not** wired to override the
+EV engine or the opponent-model fold estimate:
+
+- **Outs / draw probabilities** (`js/draw-odds.js`): next-card `O/unseen`;
+  two-card all-in `1 − (unseen−O)/unseen · (unseen−1−O)/(unseen−1)`. E.g. nine
+  outs = `9/47 = 19.1489%` on the turn, `34.9676%` by the river all-in.
+- **Set-mining**: a pocket pair flops at least a set with probability
+  `1 − C(48,3)/C(50,3) = 11.7551%`.
+- **Pure-bluff break-even folds** (`ActionEV.breakEvenFoldForBluff`):
+  `B/(P+B)` — half-pot 33.33%, pot 50%.
+- **Two-branch required fold frequency** (`ActionEV.requiredFoldFrequency`):
+  `−V_c/(P−V_c)` — the 4-bet reference `P=15, V_c=−26.6 → 63.9423%`.
+- **MDF and ideal bluff fraction** (`ActionEV.minDefenseFrequency`,
+  `idealBluffFraction`): `P/(P+B)` and `B/(P+2B)` — idealized reference values.
+- **Geometric multi-street sizing** (`DrawOdds.geometricBetFraction`):
+  `((1 + 2S/P)^{1/n} − 1)/2` — a candidate-size helper only.
+
+## 13. Deferred factors
+
+Implied/reverse-implied odds, equity realization, range-vs-range distributions,
+range/nut advantage, MDF-driven defense, mixed-strategy output, multi-street
+game trees, joint multiway EV, joint card-removal, ICM/bubble factor, Nash
+push/fold, recency-weighted stats, blocker-driven selection and a trained
+opponent model are **documented, not implemented** in live advice. See
+[future-math-roadmap.md](future-math-roadmap.md) for each factor's hook point
+and prerequisites. Only trivial, safe, disabled stubs exist
+(`DrawOdds.geometricBetFraction`, `js/tournament-icm.js`).

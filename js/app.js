@@ -30,6 +30,9 @@
     bigBlind: 10,
     ante: 0,
     potDisplayMode: "includes-current-bets",
+    gameMode: "play-money",   // play-money | cash | tournament (rake only in cash)
+    rakePercent: 0,           // e.g. 0.05 for 5%
+    rakeCap: 0,               // 0 = uncapped
     rangeSource: "uniform",
     manualRange: "QQ+, AK, AQs, AJs, KQs",
   };
@@ -493,6 +496,10 @@
       bigBlind: state.bigBlind || 0,
       opponents: opponents,
       trials: Math.min(state.trials, 40000),
+      // Rake only bites in cash mode; play-money/tournament pass 0 via ActionEV.
+      mode: state.gameMode,
+      rakePercent: state.rakePercent,
+      rakeCap: state.rakeCap,
     };
     $("strat-headline").textContent = "Calculating range EV…";
     runStrategy(dc);
@@ -869,6 +876,19 @@
     $("in-bb").addEventListener("input", function () { state.bigBlind = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
     $("in-ante").addEventListener("input", function () { state.ante = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
     $("in-potmode").addEventListener("change", function () { state.potDisplayMode = this.value; scheduleAdvanced(); });
+    $("in-gamemode").addEventListener("change", function () {
+      state.gameMode = this.value;
+      $("rake-fields").hidden = this.value !== "cash";
+      // Sync rake state from the visible field defaults when entering cash mode,
+      // so the shown % actually applies without needing to re-type it.
+      if (this.value === "cash") {
+        state.rakePercent = Math.max(0, (parseFloat($("in-rakepct").value || "0") || 0) / 100);
+        state.rakeCap = Math.max(0, parseInt($("in-rakecap").value || "0", 10) || 0);
+      }
+      scheduleAdvanced();
+    });
+    $("in-rakepct").addEventListener("input", function () { state.rakePercent = Math.max(0, (parseFloat(this.value || "0") || 0) / 100); scheduleAdvanced(); });
+    $("in-rakecap").addEventListener("input", function () { state.rakeCap = Math.max(0, parseInt(this.value || "0", 10) || 0); scheduleAdvanced(); });
     $("in-range-source").addEventListener("change", function () {
       state.rangeSource = this.value;
       $("manual-range-field").hidden = this.value !== "manual";
