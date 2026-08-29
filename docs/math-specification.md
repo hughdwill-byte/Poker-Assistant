@@ -329,6 +329,14 @@ value-heavy to balance, and — given the hero's actual hand — its **role**
 
 Composition is a cheap sort-and-partition (no simulation) run on the
 range-vs-range results. It is a **GTO-approximation plan shown alongside** the
-EV table, not the primary recommendation. Blocker-aware bluff selection and
-conditioning value on the per-size calling range are deferred (see
-[future-math-roadmap.md](future-math-roadmap.md) #15).
+EV table, not the primary recommendation.
+
+**Blocker-aware bluff selection (Wave 1.3, #15).** When an opponent range with
+per-combo equities is supplied, bluffs are no longer chosen by lowest equity
+alone. `blockerScore(a, b, opponentCombos)` sums, over opponent combos that use
+card `a` or `b`, `+weight` for the opponent's continues (equity ≥ 0.5) and
+`−weight` for their folds (equity ≤ 0.35): a good bluff blocks their value and
+unblocks their folds. `plan()` then picks the highest-scoring air (tie-broken by
+lowest equity). Heads-up the Range-vs-range card labels the plan
+"(blocker-aware bluffs)". Value-side blocker effects and multiway remain
+deferred.

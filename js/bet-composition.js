@@ -26,6 +26,35 @@
   function keyOf(c) { return Math.min(c.c1, c.c2) + "_" + Math.max(c.c1, c.c2); }
 
   /**
+   * Blocker score of a candidate hand {a,b} against the opponent's range
+   * (Wave 1.3, #15). A good BLUFF blocks the opponent's value/continuing combos
+   * (so they hold fewer calls) and does NOT block their folding combos (so it
+   * removes fewer folds). Each opponent combo that uses card a or b adds its
+   * weight when it is a continue (equity ≥ contThreshold) and subtracts its
+   * weight when it is a fold (equity ≤ foldThreshold). A higher score = a better
+   * blocker bluff.
+   *
+   * @param {number} a,b hero candidate's two cards
+   * @param {Array} oppCombos [{c1,c2,weight,equity}] opponent range with equities
+   * @param {Object} [opts] { contThreshold=0.5, foldThreshold=0.35 }
+   */
+  function blockerScore(a, b, oppCombos, opts) {
+    if (!oppCombos || !oppCombos.length) return 0;
+    opts = opts || {};
+    var cont = opts.contThreshold != null ? opts.contThreshold : 0.5;
+    var fold = opts.foldThreshold != null ? opts.foldThreshold : 0.35;
+    var score = 0;
+    for (var i = 0; i < oppCombos.length; i++) {
+      var oc = oppCombos[i];
+      if (oc.c1 === a || oc.c2 === a || oc.c1 === b || oc.c2 === b) {
+        if (oc.equity >= cont) score += oc.weight;
+        else if (oc.equity <= fold) score -= oc.weight;
+      }
+    }
+    return score;
+  }
+
+  /**
    * @param {Object} cfg
    *   combos        : [{ c1, c2, weight, equity }]  hero range with equities
    *   P, B          : pot before the bet, and the bet size (same units)
@@ -53,14 +82,22 @@
     // Balanced bluff weight from the value:bluff ratio (P+B):B -> bluff/value = B/(P+B).
     var targetBluffWeight = valueWeight * (B / (P + B));
 
-    // Pick bluffs from the LOWEST-equity air upward until the target is met.
-    var airAsc = rest.filter(function (c) { return c.equity <= bluffMaxEquity; })
-      .sort(function (a, b) { return a.equity - b.equity; });
+    // Air candidates (low showdown value) are the bluff pool.
+    var air = rest.filter(function (c) { return c.equity <= bluffMaxEquity; });
+    var blockerAware = !!(cfg.opponentCombos && cfg.opponentCombos.length);
+    if (blockerAware) {
+      // Prefer air that BLOCKS the opponent's value and unblocks their folds
+      // (#15); break ties toward the lowest showdown equity.
+      air.forEach(function (c) { c._bs = blockerScore(c.c1, c.c2, cfg.opponentCombos, cfg); });
+      air.sort(function (a, b) { return (b._bs - a._bs) || (a.equity - b.equity); });
+    } else {
+      // No opponent range given: pick the lowest-equity air.
+      air.sort(function (a, b) { return a.equity - b.equity; });
+    }
     var bluff = [], acc = 0;
-    for (var i = 0; i < airAsc.length && acc < targetBluffWeight - 1e-12; i++) {
-      // Take the whole combo; if it would overshoot a lot we still take it (a
-      // combo is atomic here) - the actual fraction is reported for honesty.
-      bluff.push(airAsc[i]); acc += airAsc[i].weight;
+    for (var i = 0; i < air.length && acc < targetBluffWeight - 1e-12; i++) {
+      // A combo is atomic; the actual fraction achieved is reported for honesty.
+      bluff.push(air[i]); acc += air[i].weight;
     }
     var bluffKeys = {}; bluff.forEach(function (c) { bluffKeys[keyOf(c)] = true; });
 
@@ -96,9 +133,10 @@
       bluffShortfall: Math.max(0, targetBluffWeight - bluffWeight), // not enough air to balance
       valueToBluff: bluffWeight > 0 ? valueWeight / bluffWeight : Infinity,
       heroRole: heroRole,
+      blockerAware: blockerAware,
       P: P, B: B,
     };
   }
 
-  Poker.BetComposition = { plan: plan };
+  Poker.BetComposition = { plan: plan, blockerScore: blockerScore };
 })(typeof self !== "undefined" ? self : this);

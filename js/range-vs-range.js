@@ -65,9 +65,21 @@
     var hero = Ranges.removeBlockers(cfg.range || [], fixed).filter(function (c) { return c.weight > 0; });
     if (!hero.length) return { ok: false, error: "Hero range is empty after removing board/dead cards." };
 
+    // The hero's actual combo (if given) must survive truncation so its
+    // in-range rank and value/bluff role can always be reported.
+    var actualKey = null;
+    if (cfg.heroActual && cfg.heroActual.length === 2 && cfg.heroActual[0] != null && cfg.heroActual[1] != null) {
+      actualKey = Math.min(cfg.heroActual[0], cfg.heroActual[1]) + "_" + Math.max(cfg.heroActual[0], cfg.heroActual[1]);
+    }
     var truncated = false;
     if (hero.length > maxCombos) {
-      hero = seededShuffle(hero, rng).slice(0, maxCombos);
+      hero = seededShuffle(hero, rng);
+      if (actualKey) {
+        var ai = -1;
+        for (var k = 0; k < hero.length; k++) { if (comboKey(hero[k]) === actualKey) { ai = k; break; } }
+        if (ai >= maxCombos) { var tmp = hero[0]; hero[0] = hero[ai]; hero[ai] = tmp; } // pull into the kept slice
+      }
+      hero = hero.slice(0, maxCombos);
       truncated = true;
     }
 

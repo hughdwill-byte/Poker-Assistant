@@ -605,9 +605,10 @@
     // reference sizes, and the balanced value/bluff split of the whole range.
     var heroCards = knownCards(state.players[state.heroIndex]);
     if (P.BetComposition && rvrPot > 0 && h.combos && h.combos.length) {
+      var oppCombos = res.oppDist && res.oppDist.combos ? res.oppDist.combos : null; // heads-up only
       var sizes = [{ label: "½ pot", B: 0.5 * rvrPot }, { label: "¾ pot", B: 0.75 * rvrPot }, { label: "pot", B: rvrPot }];
       var lines = sizes.map(function (s) {
-        var pl = P.BetComposition.plan({ combos: h.combos, P: rvrPot, B: s.B, heroActual: heroCards });
+        var pl = P.BetComposition.plan({ combos: h.combos, P: rvrPot, B: s.B, heroActual: heroCards, opponentCombos: oppCombos });
         if (!pl.ok) return null;
         var roleTxt = pl.heroRole ? pl.heroRole.toUpperCase() : "—";
         var bluffPct = (pl.actualBluffFractionOfBets * 100).toFixed(0);
@@ -617,7 +618,7 @@
       if (lines.length) {
         var wrap = document.createElement("div");
         wrap.className = "rvr-plan";
-        wrap.innerHTML = '<div class="gto-title">Balanced bet plan — your hand plays as</div>' +
+        wrap.innerHTML = '<div class="gto-title">Balanced bet plan — your hand plays as' + (oppCombos ? " (blocker-aware bluffs)" : "") + "</div>" +
           lines.map(function (l) {
             return '<div class="gto-row"><span>' + l.label + '</span><b class="role-' + l.role.toLowerCase() + '">' + l.role + "</b>" +
               '<span class="plan-bluff">' + l.bluffPct + "% bluffs" + l.shortfall + "</span></div>";

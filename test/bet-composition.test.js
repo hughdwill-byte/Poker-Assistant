@@ -86,4 +86,61 @@ module.exports = function (t) {
     t.eq("shortfall reported", res.bluffShortfall > 0);
     t.eq("value:bluff is infinite (pure value)", res.valueToBluff === Infinity);
   })();
+
+  // Wave 1.3 blocker-driven bluff selection (#15), defined below.
+  if (module.exports.blocker) module.exports.blocker(t);
 };
+
+// Appended: Wave 1.3 blocker-driven bluff selection (#15).
+module.exports.blocker = function (t) {
+  var P = global.Poker;
+  var BC = P.BetComposition;
+  var id = P.makeId;
+  var C = 0, D = 1, H = 2, S = 3;
+
+  // Opponent range: strong combos all contain As; folding combos contain 2c.
+  var As = id(14, S), Ks = id(13, S), Qs = id(12, S), Two = id(2, C), Seven = id(7, D), Eight = id(8, D);
+  function oc(a, b, eq) { return { c1: Math.min(a, b), c2: Math.max(a, b), weight: 1, equity: eq }; }
+  var oppCombos = [
+    oc(As, Ks, 0.90), oc(As, Qs, 0.88),   // opponent VALUE, blocked by holding As
+    oc(Two, Seven, 0.10), oc(Two, Eight, 0.12), // opponent FOLDS, blocked by holding 2c
+  ];
+
+  t.section("Blocker score: block value good, block folds bad");
+  (function () {
+    var blocksValue = BC.blockerScore(As, id(3, H), oppCombos);   // holds As
+    var blocksFolds = BC.blockerScore(Two, id(3, H), oppCombos);  // holds 2c
+    t.eq("holding a value blocker scores positive", blocksValue > 0);
+    t.eq("holding a fold blocker scores negative", blocksFolds < 0);
+    t.eq("value blocker beats fold blocker", blocksValue > blocksFolds);
+    t.eq("no opponent range -> zero score", BC.blockerScore(As, id(3, H), null) === 0);
+  })();
+
+  t.section("Blocker-aware plan prefers the value-blocker bluff");
+  (function () {
+    // Two air combos of equal (low) equity: one holds As (value blocker), one
+    // holds 2c (fold blocker). Only room for ONE bluff.
+    var combos = [
+      { c1: Math.min(id(14, D), id(14, H)), c2: Math.max(id(14, D), id(14, H)), weight: 1, equity: 0.9 }, // value hand
+      { c1: Math.min(As, id(3, H)), c2: Math.max(As, id(3, H)), weight: 1, equity: 0.10 },  // air, blocks value
+      { c1: Math.min(Two, id(3, D)), c2: Math.max(Two, id(3, D)), weight: 1, equity: 0.10 }, // air, blocks folds
+    ];
+    // Pot-sized bet: value weight 1 -> target bluff weight 0.5 -> one combo.
+    var aware = BC.plan({ combos: combos, P: 100, B: 100, opponentCombos: oppCombos });
+    t.eq("plan is blocker-aware", aware.blockerAware === true);
+    t.eq("chosen bluff holds the value blocker (As)", aware.bluff.length >= 1 && (aware.bluff[0].c1 === As || aware.bluff[0].c2 === As));
+    // Without an opponent range it falls back to lowest-equity (tie -> either),
+    // and is not blocker-aware.
+    var plain = BC.plan({ combos: combos, P: 100, B: 100 });
+    t.eq("no opponent range -> not blocker-aware", plain.blockerAware === false);
+  })();
+};
+
+if (require.main === module) {
+  require("./load");
+  var t = require("./harness").createHarness();
+  module.exports(t);
+  module.exports.blocker(t);
+  t.summary();
+  process.exit(t.fail ? 1 : 0);
+}

@@ -164,11 +164,15 @@ throws until enabled). Neither feeds a recommendation.
   `stats()`, but the strategy's opponents are still preset/uniform ranges.
 
 ### 15. Blocker-driven strategic bluff/value selection
-- **Why:** hero's own blockers should bias which hands bluff or value-bet.
-- **Hook:** `hand-features.blockers` already computes blocker flags;
-  `opponent-model`/`strategy` would use them to pick bluff combos.
-- **Needs first:** #4/#7 (range and nut advantage) so blocker effects are
-  weighed against a real continuing range, not applied as a bonus.
+- **Status:** **shipped (Phase C, Wave 1.3).** `BetComposition.blockerScore()`
+  scores an air candidate by how much it blocks the opponent's value/continue
+  combos (good) and unblocks their folds (bad), using the opponent-range
+  distribution's per-combo equities (#3). When an opponent range is supplied,
+  `plan()` picks bluffs by blocker score (tie-broken by lowest equity) instead
+  of pure lowest-equity; the Range-vs-range card labels the plan
+  "(blocker-aware bluffs)" heads-up.
+- **Remaining:** value-side blocker effects (e.g. thin value vs blocker-heavy
+  calling ranges) and multiway; today it refines bluff selection heads-up.
 
 ### 16. Trained ML opponent model
 - **Why:** a learned policy could outperform the heuristic likelihood.
