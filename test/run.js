@@ -15,6 +15,7 @@ var suites = [
   "./range-equity.test",
   "./action-ev.test",
   "./rake-and-refs.test",
+  "./equilibrium.test",
   "./watch-inference.test",
 ];
 

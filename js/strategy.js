@@ -92,6 +92,26 @@
     var breakEven = C > 0 ? EV.breakEvenEquity(P, C) : 0;
     var evByAction = [];
 
+    // GTO reference (pot-geometry only; reference-only, never overrides EV).
+    // Facing a bet: villain bet B = C into a pot of (P - C), so MDF/alpha
+    // describe the size hero faces. Unbet: references are per candidate size.
+    var EQ = Poker.Equilibrium;
+    var equilibrium = null;
+    if (EQ && C > 0) {
+      var potBeforeBet = Math.max(0, P - C);
+      equilibrium = {
+        facing: true,
+        betFractionOfPot: potBeforeBet > 0 ? C / potBeforeBet : null,
+        mdf: EQ.mdf(potBeforeBet, C),
+        alpha: EQ.alpha(potBeforeBet, C),
+        valueToBluff: EQ.valueToBluff(potBeforeBet, C),
+        callBreakEvenEquity: EQ.reference(potBeforeBet, C).callBreakEvenEquity,
+        note: "Equilibrium reference for the size faced; the recommendation itself is exploitative EV.",
+      };
+    } else if (EQ) {
+      equilibrium = { facing: false, note: "Balanced value:bluff targets are shown per candidate bet size." };
+    }
+
     // Model confidence: shrink with wide CIs, multiway approximation and sparse
     // opponent samples.
     var ciWidth = ci[1] - ci[0];
@@ -150,6 +170,7 @@
       assumptions: assumptions,
       warnings: warnings.concat(eqRes.warning ? [eqRes.warning] : []),
       explanation: explanation,
+      equilibrium: equilibrium,
       equityDetail: eqRes,
     };
   }
@@ -218,7 +239,9 @@
         var potM = P + 2 * B;
         ev = resp.fold * P + (1 - resp.fold) * (eCalled * potM - B - eCalled * EV.rake(potM, dc._rakeCtx));
       }
-      evByAction.push({ action: "BET", amount: round(B), raiseTo: round(tg.to), ev: round(ev, 1), foldEquity: round(resp.fold, 3), equityWhenCalled: round(eCalled, 3), label: tg.label, confidence: multiway ? baseConf * 0.7 : baseConf });
+      // Balanced (GTO reference) bluff share of the betting range at this size.
+      var bluffTarget = Poker.Equilibrium ? Poker.Equilibrium.bluffFractionOfRange(P, B) : null;
+      evByAction.push({ action: "BET", amount: round(B), raiseTo: round(tg.to), ev: round(ev, 1), foldEquity: round(resp.fold, 3), equityWhenCalled: round(eCalled, 3), bluffTarget: bluffTarget != null ? round(bluffTarget, 3) : null, label: tg.label, confidence: multiway ? baseConf * 0.7 : baseConf });
     });
   }
 

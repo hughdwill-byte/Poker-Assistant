@@ -173,9 +173,13 @@ comparing estimated EV across legal candidates (§8), not by Kelly.
 
 The opponent ranges and action likelihoods are transparent heuristics and
 Bayesian updates (`js/opponent-model.js`, `js/range-presets.js`), not the output
-of an equilibrium solver. Nothing here is labelled "GTO". The strategy names
-used are "Range/EV strategy", "model-adjusted recommendation" and
-"showdown-equity recommendation".
+of an equilibrium solver. The **recommendation** is never labelled "GTO" — its
+names are "Range/EV strategy", "model-adjusted recommendation" and
+"showdown-equity recommendation". The one place "GTO" appears is the clearly
+labelled **GTO reference** readout (§14): deterministic indifference math shown
+*alongside* the recommendation for comparison, explicitly marked "reference only
+— the recommendation is exploitative EV, not a solver output". It never drives
+the advice.
 
 ## 12. Deterministic reference formulas
 
@@ -207,3 +211,27 @@ opponent model are **documented, not implemented** in live advice. See
 [future-math-roadmap.md](future-math-roadmap.md) for each factor's hook point
 and prerequisites. Only trivial, safe, disabled stubs exist
 (`DrawOdds.geometricBetFraction`, `js/tournament-icm.js`).
+
+## 14. GTO reference layer (Phase C, Wave 0)
+
+`js/equilibrium.js` provides the deterministic indifference references implied
+by pot geometry alone (heads-up, one street, no rake; the spec §8.4 model). For
+a bet of size `B` into pot `P`:
+
+```
+MDF (min defense frequency) = P / (P + B)       // defender must continue this often
+alpha (bettor risk / max fold) = B / (P + B)    // = 1 − MDF; a pure bluff's break-even fold
+balanced bluff fraction      = B / (P + 2B)     // bluff share of a polarised betting range
+value : bluff                = (P + B) : B
+call break-even equity       = B / (P + 2B)     // a bluff-catcher's price facing the bet
+```
+
+Validated against the spec table (`test/equilibrium.test.js`): ¼-pot → MDF 80%,
+α 20%, bluff 16.67%; pot → MDF 50%, α 50%, bluff 33.33%, value:bluff 2:1; etc.
+
+This is a **reference layer**. It is shown alongside the exploitative EV
+recommendation — a "GTO reference" readout facing a bet (MDF, α, value:bluff)
+and a balanced-bluff column per candidate bet size — and it **never** overrides
+the EV engine, the opponent-model fold estimate, or legal-action generation.
+Wiring these into live advice (MDF-driven defense, mixed-strategy frequencies)
+is deferred; see [future-math-roadmap.md](future-math-roadmap.md) #5, #6, #7.

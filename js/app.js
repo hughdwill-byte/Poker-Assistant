@@ -539,18 +539,39 @@
     if (r.equityCi) addStat(stats, "95% CI", pct(r.equityCi[0]) + "–" + pct(r.equityCi[1]));
     if (r.potOdds) addStat(stats, "Break-even", pct(r.potOdds));
 
-    // EV table of the leading candidates.
+    // EV table of the leading candidates. The last column shows the balanced
+    // (GTO reference) bluff share of the betting range for BET candidates.
     var tbl = $("ev-table"); tbl.innerHTML = "";
     var head = document.createElement("tr");
-    head.innerHTML = "<th>Action</th><th>Size</th><th>EV (chips)</th><th>Fold eq.</th>";
+    head.innerHTML = "<th>Action</th><th>Size</th><th>EV (chips)</th><th>Fold eq.</th><th title='Balanced bluff share of the betting range at this size (GTO reference)'>Bal. bluff</th>";
     tbl.appendChild(head);
     (r.evByAction || []).slice(0, 7).forEach(function (a) {
       var tr = document.createElement("tr");
       var size = a.raiseTo ? ("to " + a.raiseTo) : (a.amount ? a.amount : "—");
+      var bluff = a.bluffTarget != null ? (a.bluffTarget * 100).toFixed(0) + "%" : "—";
       tr.innerHTML = "<td>" + a.action + "</td><td>" + size + "</td><td>" +
-        (a.ev == null ? "—" : a.ev) + "</td><td>" + (a.foldEquity != null ? (a.foldEquity * 100).toFixed(0) + "%" : "—") + "</td>";
+        (a.ev == null ? "—" : a.ev) + "</td><td>" + (a.foldEquity != null ? (a.foldEquity * 100).toFixed(0) + "%" : "—") + "</td><td>" + bluff + "</td>";
       tbl.appendChild(tr);
     });
+
+    // GTO reference block (pot-geometry equilibrium; reference-only).
+    var gto = $("gto-ref"); gto.innerHTML = "";
+    if (r.equilibrium && r.equilibrium.facing) {
+      var eq = r.equilibrium;
+      gto.hidden = false;
+      gto.innerHTML =
+        '<div class="gto-title">GTO reference (size faced' +
+        (eq.betFractionOfPot != null ? " ≈ " + (eq.betFractionOfPot * 100).toFixed(0) + "% pot" : "") + ")</div>" +
+        '<div class="gto-row"><span>Min-defense freq</span><b>' + pct(eq.mdf) + "</b></div>" +
+        '<div class="gto-row"><span>Bluff must fold (α)</span><b>' + pct(eq.alpha) + "</b></div>" +
+        '<div class="gto-row"><span>Balanced value:bluff</span><b>' + (isFinite(eq.valueToBluff) ? eq.valueToBluff.toFixed(1) + ":1" : "—") + "</b></div>" +
+        '<div class="gto-note">Reference only — the recommendation above is exploitative EV, not a solver output.</div>';
+    } else if (r.equilibrium) {
+      gto.hidden = false;
+      gto.innerHTML = '<div class="gto-note">GTO reference: the “Bal. bluff” column shows the balanced bluff share for each candidate bet size. Reference only — advice is exploitative EV.</div>';
+    } else {
+      gto.hidden = true;
+    }
 
     var a = $("strat-assumptions"); a.innerHTML = "";
     (r.assumptions || []).forEach(function (s) { var li = document.createElement("li"); li.textContent = s; a.appendChild(li); });

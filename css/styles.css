@@ -698,3 +698,10 @@ body {
 .strat-warnings .warn { color: var(--bad); margin: 3px 0; }
 .strat-warnings .range-src { color: var(--muted); margin-top: 6px; line-height: 1.4; }
 #range-summary { margin-top: 4px; }
+
+/* ---- GTO reference (Phase C, Wave 0) ---- */
+.gto-ref { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--panel-2); border-radius: 8px; background: var(--panel-2); }
+.gto-title { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin-bottom: 6px; }
+.gto-row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
+.gto-row b { color: var(--accent); }
+.gto-note { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }

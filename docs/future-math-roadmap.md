@@ -50,11 +50,16 @@ throws until enabled). Neither feeds a recommendation.
   solver outputs so "advantage" maps to real strategy, not a slogan.
 
 ### 5. Minimum Defense Frequency (MDF) and alpha
+- **Status:** the **reference layer is shipped** (Phase C, Wave 0) as
+  `js/equilibrium.js` — MDF `P/(P+B)`, alpha `B/(P+B)`, balanced bluff fraction
+  `B/(P+2B)`, value:bluff `(P+B):B`, defense assessment and betting composition,
+  validated against the spec §8.4 table. It is surfaced in the Advanced UI as a
+  "GTO reference" readout and a balanced-bluff column, **reference-only**. What
+  remains deferred is *wiring* it into advice.
 - **Why:** replace heuristic fold estimates with indifference-based defense.
-- **Hook:** the reference formulas already exist (`action-ev.js
-  minDefenseFrequency`, `idealBluffFraction`); wiring would replace
-  `opponent-model.actionLikelihood`'s fold estimate with an MDF-derived defense
-  where the opponent is assumed near-optimal.
+- **Hook:** wiring would replace `opponent-model.actionLikelihood`'s fold
+  estimate with the `equilibrium.mdf`/`defenseAssessment` output where the
+  opponent is assumed near-optimal.
 - **Needs first:** a decision on exploit-vs-GTO posture per opponent (MDF
   assumes a defending opponent; exploitative play deviates), and calibration so
   MDF is used only where population data supports near-optimal defense.
