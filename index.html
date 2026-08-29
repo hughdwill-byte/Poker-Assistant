@@ -27,6 +27,7 @@
     </div>
     <div class="topbar-actions">
       <button id="btn-watch" class="btn" title="Read a shared tab/window live and fill the table automatically">👁 Watch</button>
+      <button id="btn-hud" class="btn" title="Overlay the war-style tactical HUD on this page (practice / study / replay)">🎯 HUD</button>
       <button id="btn-next-hand" class="btn" title="Muck the current cards and deal a fresh hand (keeps them dead until the next shuffle)">Next hand</button>
       <button id="btn-shuffle" class="btn" title="Return every card to the deck">Shuffle</button>
       <button id="btn-reset" class="btn btn-ghost" title="Clear all cards on the table">Clear table</button>
@@ -90,6 +91,95 @@
           <input id="in-stack" type="number" inputmode="numeric" min="0" step="1" value="1000" />
         </div>
         <p class="hint">Click a seat's ⌂ button to mark which seat is you.</p>
+      </section>
+
+      <section class="control-group">
+        <h2>Advanced range strategy</h2>
+        <div class="field">
+          <label class="check-row" for="in-advanced">
+            <input id="in-advanced" type="checkbox" />
+            <span>Enable range-aware EV strategy (one deck)</span>
+          </label>
+          <p class="hint">Simple mode keeps working. Advanced mode models opponents as weighted hand ranges and compares the EV of every legal action. Disabled for more than one deck.</p>
+        </div>
+        <div id="advanced-body" hidden>
+          <div class="field-row">
+            <div class="field"><label for="in-sb">Small blind</label><input id="in-sb" type="number" inputmode="numeric" min="0" step="1" value="5" /></div>
+            <div class="field"><label for="in-bb">Big blind</label><input id="in-bb" type="number" inputmode="numeric" min="0" step="1" value="10" /></div>
+            <div class="field"><label for="in-ante">Ante</label><input id="in-ante" type="number" inputmode="numeric" min="0" step="1" value="0" /></div>
+          </div>
+          <div class="field">
+            <label for="in-potmode">Displayed-pot convention</label>
+            <select id="in-potmode">
+              <option value="includes-current-bets" selected>Pot box includes the current bets</option>
+              <option value="excludes-current-bets">Pot box excludes the current bets</option>
+              <option value="manual-canonical">Pot box is already the amount you can win</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="in-gamemode">Game type</label>
+            <select id="in-gamemode">
+              <option value="play-money" selected>Play money (no rake)</option>
+              <option value="cash">Cash (rake applies)</option>
+              <option value="tournament">Tournament (chip EV, no rake)</option>
+            </select>
+          </div>
+          <div class="field-row" id="rake-fields" hidden>
+            <div class="field"><label for="in-rakepct">Rake %</label><input id="in-rakepct" type="number" inputmode="decimal" min="0" max="15" step="0.5" value="5" /></div>
+            <div class="field"><label for="in-rakecap">Rake cap (0 = none)</label><input id="in-rakecap" type="number" inputmode="numeric" min="0" step="1" value="0" /></div>
+          </div>
+          <div class="field">
+            <label for="in-population">Opponent pool (baseline priors)</label>
+            <select id="in-population">
+              <option value="default" selected>Default (6-max, ~25/17)</option>
+              <option value="micro">Micro stakes (loose-passive)</option>
+              <option value="low">Low stakes</option>
+              <option value="mid">Mid stakes</option>
+              <option value="high">High stakes / regs (tight-aggressive)</option>
+              <option value="live">Live low-stakes (very loose)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="in-range-source">Opponent range (applied to active opponents)</label>
+            <select id="in-range-source">
+              <option value="uniform" selected>Uniform — any two cards (versus random)</option>
+              <option value="position">Position open-raise prior (heuristic)</option>
+              <option value="manual">Manual range text</option>
+            </select>
+          </div>
+          <div class="field" id="manual-range-field" hidden>
+            <label for="in-range-text">Range text (e.g. QQ+, AKs, AJs+, KQo, 22-66, AKs:0.5)</label>
+            <input id="in-range-text" type="text" value="QQ+, AK, AQs, AJs, KQs" spellcheck="false" />
+            <p class="hint" id="range-summary"></p>
+          </div>
+          <div class="field">
+            <label for="in-hero-range">Your range for this spot (range-vs-range analysis)</label>
+            <select id="in-hero-range">
+              <option value="none" selected>Off</option>
+              <option value="uniform">Uniform — any two cards</option>
+              <option value="position">Your position open-raise prior</option>
+              <option value="manual">Manual range text</option>
+            </select>
+          </div>
+          <div class="field" id="hero-range-field" hidden>
+            <label for="in-hero-range-text">Your range text</label>
+            <input id="in-hero-range-text" type="text" value="QQ+, AK, AQs, KQs, JTs" spellcheck="false" />
+          </div>
+          <div class="rec-card" id="rvr-card" hidden>
+            <div class="rec-label">Range vs range</div>
+            <div class="rec-stats" id="rvr-stats"></div>
+            <div class="gto-note" id="rvr-note"></div>
+          </div>
+          <div class="rec-card" id="strategy-card" hidden>
+            <div class="rec-label">Range / EV strategy</div>
+            <div class="rec-headline" id="strat-headline">—</div>
+            <div class="rec-stats" id="strat-stats"></div>
+            <table class="ev-table" id="ev-table"></table>
+            <div class="gto-ref" id="gto-ref" hidden></div>
+            <ul class="rec-reasons" id="strat-assumptions"></ul>
+            <div class="strat-warnings" id="strat-warnings"></div>
+          </div>
+        </div>
       </section>
 
       <section class="control-group">
@@ -170,6 +260,25 @@
   <script src="js/evaluator.js"></script>
   <script src="js/equity.js"></script>
   <script src="js/advice.js"></script>
+  <script src="js/game-state.js"></script>
+  <script src="js/action-tracker.js"></script>
+  <script src="js/ranges.js"></script>
+  <script src="js/range-presets.js"></script>
+  <script src="js/hand-features.js"></script>
+  <script src="js/opponent-model.js"></script>
+  <script src="js/range-equity.js"></script>
+  <script src="js/range-vs-range.js"></script>
+  <script src="js/action-ev.js"></script>
+  <script src="js/draw-odds.js"></script>
+  <script src="js/equilibrium.js"></script>
+  <script src="js/bet-composition.js"></script>
+  <script src="js/gto-defense.js"></script>
+  <script src="js/equity-realization.js"></script>
+  <script src="js/implied-odds.js"></script>
+  <script src="js/tournament-icm.js"></script>
+  <script src="js/strategy.js"></script>
+  <script src="js/watch-inference.js"></script>
+  <script src="js/persistence.js"></script>
   <script src="js/app.js"></script>
   <script src="js/carddb.js"></script>
   <script src="js/watch.js"></script>

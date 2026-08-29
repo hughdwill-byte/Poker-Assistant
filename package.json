@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Real-time Texas Hold'em win-probability and betting advisor. Static site, no build step.",
   "scripts": {
-    "test": "node test/engine.test.js",
+    "test": "node test/run.js",
     "start": "node -e \"const http=require('http'),fs=require('fs'),path=require('path');const t={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'};http.createServer((q,s)=>{let p=path.join(process.cwd(),q.url==='/'?'index.html':q.url.split('?')[0]);fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end('not found');}s.writeHead(200,{'Content-Type':t[path.extname(p)]||'text/plain'});s.end(d);});}).listen(8080,()=>console.log('Poker Assistant on http://localhost:8080'));\""
   },
   "license": "MIT"

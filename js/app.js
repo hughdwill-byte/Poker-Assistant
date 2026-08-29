@@ -24,6 +24,20 @@
     players: [],                            // { name, cards:[id|null,id|null], active, stack }
     dealer: null,                           // seat index with the dealer button (for position)
     lastResults: null,
+    // Advanced range-EV mode.
+    advanced: false,
+    smallBlind: 5,
+    bigBlind: 10,
+    ante: 0,
+    potDisplayMode: "includes-current-bets",
+    gameMode: "play-money",   // play-money | cash | tournament (rake only in cash)
+    rakePercent: 0,           // e.g. 0.05 for 5%
+    rakeCap: 0,               // 0 = uncapped
+    rangeSource: "uniform",
+    manualRange: "QQ+, AK, AQs, AJs, KQs",
+    population: "default",     // opponent-pool baseline priors (Wave 0.3)
+    heroRangeSource: "none",   // range-vs-range analysis (Wave 1.1)
+    heroRangeText: "QQ+, AK, AQs, KQs, JTs",
   };
 
   function defaultName(i) { return "Player " + (i + 1); }
@@ -45,12 +59,16 @@
   var pickerEl = $("picker"), pickerGrid = $("picker-grid"), pickerTitle = $("picker-title");
 
   // ---------- Worker ----------
-  var worker = null, jobId = 0, pendingId = 0;
+  // Job ids are tracked per channel so a strategy job never clobbers the uniform
+  // equity job (and each channel ignores its own stale results).
+  var worker = null, jobId = 0, pendingId = 0, pendingStrategyId = 0, pendingRvrId = 0;
   try {
     worker = new Worker("js/worker.js");
     worker.onmessage = function (e) {
-      if (e.data.id !== pendingId) return; // ignore stale
-      applyResults(e.data.result);
+      var d = e.data || {};
+      if (d.id === pendingId) applyResults(d.result);
+      else if (d.id === pendingStrategyId) applyStrategy(d.result);
+      else if (d.id === pendingRvrId) applyRvr(d.result);
     };
     worker.onerror = function () { worker = null; };
   } catch (err) { worker = null; }
@@ -58,13 +76,38 @@
   function runSimulation(cfg) {
     pendingId = ++jobId;
     if (worker) {
-      worker.postMessage({ id: pendingId, cfg: cfg });
+      worker.postMessage({ id: pendingId, type: "simulate", cfg: cfg });
     } else {
-      // Synchronous fallback (e.g. opened directly from file://).
       var myId = pendingId;
       setTimeout(function () {
         var res = P.simulate(cfg);
         if (myId === pendingId) applyResults(res);
+      }, 0);
+    }
+  }
+
+  function runStrategy(cfg) {
+    pendingStrategyId = ++jobId;
+    if (worker) {
+      worker.postMessage({ id: pendingStrategyId, type: "strategy", cfg: cfg });
+    } else {
+      var myId = pendingStrategyId;
+      setTimeout(function () {
+        var res = P.Strategy.rangeRecommend(cfg);
+        if (myId === pendingStrategyId) applyStrategy(res);
+      }, 0);
+    }
+  }
+
+  function runRvr(cfg) {
+    pendingRvrId = ++jobId;
+    if (worker) {
+      worker.postMessage({ id: pendingRvrId, type: "rvr", cfg: cfg });
+    } else {
+      var myId = pendingRvrId;
+      setTimeout(function () {
+        var res = P.RangeVsRange.analyze(cfg);
+        if (myId === pendingRvrId) applyRvr(res);
       }, 0);
     }
   }
@@ -377,6 +420,390 @@
     };
     simStatus.textContent = "Calculating…";
     runSimulation(cfg);
+    scheduleAdvanced();
+  }
+
+  // ---------- Advanced range-EV strategy ----------
+  var advTimer = null;
+  function scheduleAdvanced() {
+    if (advTimer) clearTimeout(advTimer);
+    advTimer = setTimeout(computeAdvanced, 160);
+  }
+
+  function positionOfSeat(seatIndex) {
+    // Position label from the dealer button, over the CURRENTLY active seats.
+    if (state.dealer == null) return null;
+    var active = [];
+    for (var i = 0; i < state.numPlayers; i++) if (state.players[i].active) active.push(i);
+    if (active.length < 2) return null;
+    var order = ["BTN", "SB", "BB", "UTG", "UTG+1", "MP", "MP+1", "HJ", "CO"];
+    // Walk clockwise from the button across active seats.
+    var seq = [];
+    for (var step = 0; step < state.numPlayers; step++) {
+      var s = (state.dealer + step) % state.numPlayers;
+      if (state.players[s].active) seq.push(s);
+    }
+    if (seq.length === 2) { // heads-up
+      return seatIndex === seq[0] ? "BTN" : "BB";
+    }
+    var idx = seq.indexOf(seatIndex);
+    if (idx < 0) return null;
+    return order[Math.min(idx, order.length - 1)];
+  }
+
+  // Context for the equity-realization heuristic (#1): street, position, SPR and
+  // whether the hero holds a draw / strong made hand. Initiative is unknown
+  // (we don't track a chronological action stream), so it stays neutral.
+  function heroRealizationCtx() {
+    var boardArr = state.board.filter(function (c) { return c !== null; });
+    var street = boardArr.length >= 5 ? "river" : boardArr.length === 4 ? "turn" : boardArr.length === 3 ? "flop" : "preflop";
+    var pos = positionOfSeat(state.heroIndex);
+    var inPosition = pos == null ? null : (pos === "BTN" || pos === "CO" || pos === "BTN/SB");
+    var pot = canonicalPotForAdvanced();
+    var hero = state.players[state.heroIndex];
+    var spr = pot > 0 && hero ? hero.stack / pot : 3;
+    var draw = false, madeStrong = false;
+    if (P.HandFeatures && boardArr.length >= 3) {
+      var f = P.HandFeatures.extract(knownCards(hero), boardArr);
+      draw = !!(f.flush && (f.flush.flushDraw || f.comboDraw)) || !!(f.straight && (f.straight.oesd || f.straight.gutshot || f.straight.doubleGutshot));
+      madeStrong = !!(f.made && f.made.category >= P.CATEGORY.TWO_PAIR);
+      if (madeStrong) draw = false; // a strong made hand isn't "a draw"
+    }
+    return { street: street, inPosition: inPosition, hasInitiative: null, spr: spr, draw: draw, madeStrong: madeStrong };
+  }
+
+  function buildOpponentRange(seatIndex) {
+    var Ranges = P.Ranges;
+    var blockers = allUsedCards();
+    var base, source;
+    if (state.rangeSource === "manual") {
+      var parsed = Ranges.parse(state.manualRange || "");
+      if (!parsed.ok || !parsed.range.length) { base = Ranges.fullRange(); source = "uniform (manual range invalid: " + (parsed.error || "empty") + ")"; }
+      else { base = parsed.range; source = "manual range"; }
+    } else if (state.rangeSource === "position") {
+      var pos = positionOfSeat(seatIndex);
+      var prior = P.RangePresets.priorFor({ position: pos });
+      base = prior.range; source = prior.source;
+    } else {
+      base = Ranges.fullRange(); source = "uniform (versus random hands)";
+    }
+    var cleaned = Ranges.normalise(Ranges.removeBlockers(base, blockers));
+    return { range: cleaned, source: source };
+  }
+
+  function computeAdvanced() {
+    var card = $("strategy-card");
+    if (!state.advanced) { if (card) card.hidden = true; return; }
+    if (!card) return;
+    card.hidden = false;
+    var hero = state.players[state.heroIndex];
+
+    if (state.decks > 1) {
+      renderStrategyMessage("Range strategy is one-deck only",
+        ["Advanced range modelling is disabled for more than one deck.",
+         "Switch decks back to 1, or use Simple mode's uniform equity."]);
+      return;
+    }
+    if (!hero || knownCards(hero).length < 2) {
+      renderStrategyMessage("Enter both hero cards", ["Range/EV strategy needs your exact two cards."]);
+      return;
+    }
+    var opponents = [];
+    for (var i = 0; i < state.numPlayers; i++) {
+      if (i === state.heroIndex || !state.players[i].active) continue;
+      var built = buildOpponentRange(i);
+      if (!built.range.length) continue;
+      opponents.push({ seatId: i, range: built.range, source: built.source });
+    }
+    if (!opponents.length) {
+      renderStrategyMessage("No active opponents", ["Add at least one active opponent to model a range."]);
+      return;
+    }
+
+    var P0 = canonicalPotForAdvanced();
+    var C0 = Math.max(0, state.toCall || 0);
+    var dc = {
+      heroCards: knownCards(hero),
+      board: state.board.filter(function (c) { return c !== null; }),
+      deadCards: state.dead.slice(),
+      P: P0, C: C0,
+      heroStreetCommitted: 0,
+      heroStackBehind: hero.stack,
+      currentBetTo: C0,
+      lastFullRaiseSize: state.bigBlind || 0,
+      bigBlind: state.bigBlind || 0,
+      opponents: opponents,
+      trials: Math.min(state.trials, 40000),
+      // Rake only bites in cash mode; play-money/tournament pass 0 via ActionEV.
+      mode: state.gameMode,
+      rakePercent: state.rakePercent,
+      rakeCap: state.rakeCap,
+      population: state.population,
+    };
+    $("strat-headline").textContent = "Calculating range EV…";
+    runStrategy(dc);
+    computeRvr(opponents, hero, dc.board, dc.deadCards, P0, C0);
+  }
+
+  var rvrPot = 0, rvrToCall = 0; // canonical pot + call captured for the range-vs-range plan/defense
+
+  // Range-vs-range analysis (Wave 1.1): how the hero's whole range performs on
+  // this board, where the hero's actual hand ranks within it, and (heads-up)
+  // the range/nut advantage. Analysis only - it never changes the EV advice.
+  function buildHeroRange() {
+    var Ranges = P.Ranges;
+    // The hero's own cards belong IN the hero range, so they must not block it.
+    // Block only the board, dead cards and any other players' known cards.
+    var blockers = allUsedCards();
+    knownCards(state.players[state.heroIndex]).forEach(function (hc) {
+      var i = blockers.indexOf(hc);
+      if (i >= 0) blockers.splice(i, 1);
+    });
+    var base, source;
+    if (state.heroRangeSource === "manual") {
+      var parsed = Ranges.parse(state.heroRangeText || "");
+      if (!parsed.ok || !parsed.range.length) return { range: [], source: "invalid: " + (parsed.error || "empty") };
+      base = parsed.range; source = "manual";
+    } else if (state.heroRangeSource === "position") {
+      var pos = positionOfSeat(state.heroIndex);
+      var prior = P.RangePresets.priorFor({ position: pos });
+      base = prior.range; source = prior.source;
+    } else {
+      base = Ranges.fullRange(); source = "uniform";
+    }
+    // Keep the hero's ACTUAL hand in the range so it can be located, but remove
+    // board/dead blockers.
+    return { range: Ranges.normalise(Ranges.removeBlockers(base, blockers)), source: source };
+  }
+
+  function computeRvr(opponents, hero, board, dead, pot, toCall) {
+    rvrPot = pot || 0;
+    rvrToCall = toCall || 0;
+    var card = $("rvr-card");
+    if (!card) return;
+    if (state.heroRangeSource === "none") { card.hidden = true; return; }
+    var built = buildHeroRange();
+    if (!built.range.length) { card.hidden = false; renderRvrMessage("Your range is empty or invalid."); return; }
+    card.hidden = false;
+    $("rvr-stats").innerHTML = "";
+    $("rvr-note").textContent = "Analysing your range on this board…";
+    var oppRanges = opponents.map(function (o) { return o.range; });
+    runRvr({
+      heroRange: built.range,
+      opponentRanges: oppRanges,
+      opponentRange: opponents.length === 1 ? opponents[0].range : null, // advantage only heads-up
+      board: board, deadCards: dead,
+      heroActual: knownCards(hero),
+      trials: 1200, maxCombos: 120, seed: 1, exactLimit: 60000,
+      _rangeSource: built.source,
+    });
+  }
+
+  function renderRvrMessage(msg) {
+    $("rvr-stats").innerHTML = "";
+    $("rvr-note").textContent = msg;
+  }
+
+  function applyRvr(res) {
+    if (!res) return;
+    var card = $("rvr-card");
+    if (state.heroRangeSource === "none") { card.hidden = true; return; }
+    if (!res.ok) { renderRvrMessage(res.error || "Range-vs-range unavailable."); return; }
+    var pct = function (x) { return (x * 100).toFixed(1) + "%"; };
+    var h = res.heroDist;
+    var stats = $("rvr-stats"); stats.innerHTML = "";
+    addStat(stats, "Your range equity", pct(h.meanEquity));
+    addStat(stats, "Nutted share", pct(h.nutFraction));
+    if (h.heroActual) {
+      addStat(stats, "Your hand", pct(h.heroActual.equity));
+      addStat(stats, "In-range rank", pct(h.heroActual.percentile) + "ile");
+    }
+    if (res.advantage) {
+      var a = res.advantage;
+      addStat(stats, "Range edge", (a.equityEdge >= 0 ? "+" : "") + (a.equityEdge * 100).toFixed(1) + "%");
+      addStat(stats, "Nut advantage", (a.nutAdvantage >= 0 ? "+" : "") + (a.nutAdvantage * 100).toFixed(1) + "%");
+    }
+    // GTO defense verdict (#5): facing a bet, MDF + the hero hand's in-range
+    // percentile give a defend/fold call. Shown as a labelled equilibrium
+    // verdict beside the EV recommendation (the EV table stays primary).
+    if (P.GtoDefense && rvrToCall > 0 && h.heroActual && h.heroActual.percentile != null) {
+      var gv = P.GtoDefense.defenseVerdict({ P: rvrPot, C: rvrToCall, heroPercentile: h.heroActual.percentile });
+      if (gv) {
+        var evAction = (lastStrategy && lastStrategy.action) || null;
+        var rec = P.GtoDefense.reconcile(gv, evAction);
+        var gd = document.createElement("div");
+        gd.className = "rvr-plan gto-defense";
+        var verdictTxt = gv.verdict === "defend" ? "DEFEND (call/raise)" : "FOLD";
+        gd.innerHTML = '<div class="gto-title">Equilibrium defense (facing this bet)</div>' +
+          '<div class="gto-row"><span>MDF (defend the top)</span><b>' + (gv.mdf * 100).toFixed(0) + "%</b></div>" +
+          '<div class="gto-row"><span>Your hand ranks</span><b>' + (gv.heroPercentile * 100).toFixed(0) + "ile</b></div>" +
+          '<div class="gto-row"><span>Equilibrium verdict</span><b class="role-' + (gv.verdict === "defend" ? "value" : "check") + '">' + verdictTxt + "</b></div>" +
+          (rec.note ? '<div class="gto-note">' + rec.note + "</div>" : "");
+        $("rvr-stats").appendChild(gd);
+      }
+    }
+
+    // Polarised bet-composition plan (#7): where the hero's hand plays at a few
+    // reference sizes, and the balanced value/bluff split of the whole range.
+    var heroCards = knownCards(state.players[state.heroIndex]);
+    if (P.BetComposition && rvrPot > 0 && h.combos && h.combos.length) {
+      var oppCombos = res.oppDist && res.oppDist.combos ? res.oppDist.combos : null; // heads-up only
+      var sizes = [{ label: "½ pot", B: 0.5 * rvrPot }, { label: "¾ pot", B: 0.75 * rvrPot }, { label: "pot", B: rvrPot }];
+      var lines = sizes.map(function (s) {
+        var pl = P.BetComposition.plan({ combos: h.combos, P: rvrPot, B: s.B, heroActual: heroCards, opponentCombos: oppCombos });
+        if (!pl.ok) return null;
+        var roleTxt = pl.heroRole ? pl.heroRole.toUpperCase() : "—";
+        // Mixed-strategy frequency for the hero hand (#6): bet% vs check%.
+        var freqTxt = "";
+        if (pl.heroMix) {
+          var bf = Math.round(pl.heroMix.betFreq * 100);
+          if (pl.heroMix.kind === "value") freqTxt = "bet 100%";
+          else if (pl.heroMix.kind === "bluff") freqTxt = "bet " + bf + "% / check " + (100 - bf) + "%";
+          else freqTxt = "check 100%";
+        }
+        return { label: s.label, role: roleTxt, freq: freqTxt };
+      }).filter(Boolean);
+      if (lines.length) {
+        var wrap = document.createElement("div");
+        wrap.className = "rvr-plan";
+        wrap.innerHTML = '<div class="gto-title">Balanced bet plan — your hand plays as' + (oppCombos ? " (blocker-aware bluffs)" : "") + "</div>" +
+          lines.map(function (l) {
+            return '<div class="gto-row"><span>' + l.label + '</span><b class="role-' + l.role.toLowerCase() + '">' + l.role + "</b>" +
+              '<span class="plan-bluff">' + l.freq + "</span></div>";
+          }).join("");
+        $("rvr-stats").appendChild(wrap);
+      }
+    }
+
+    var note = [];
+    if (h.truncated) note.push("Range sampled (" + h.combosEvaluated + " combos) for speed.");
+    note.push(res.advantage ? "Heads-up range/nut advantage on this board." : "Multiway: showing your range only (no pairwise advantage).");
+    note.push("Balanced-range plan is a GTO approximation shown for comparison; the EV table is the recommendation.");
+    $("rvr-note").textContent = note.join(" ");
+  }
+
+  function canonicalPotForAdvanced() {
+    var pot = Math.max(0, state.pot || 0), toCall = Math.max(0, state.toCall || 0);
+    switch (state.potDisplayMode) {
+      case "excludes-current-bets": return pot + toCall; // add the bet hero faces
+      case "manual-canonical": return pot;
+      default: return pot; // includes-current-bets: hero has not yet added the call
+    }
+  }
+
+  var lastStrategy = null; // last range-EV recommendation, for GTO-vs-EV reconciliation
+  function applyStrategy(result) {
+    if (!result) return;
+    if (result.error) { lastStrategy = null; renderStrategyMessage("Range strategy unavailable", [result.error]); return; }
+    lastStrategy = result;
+    renderStrategy(result);
+  }
+
+  function renderStrategyMessage(headline, lines) {
+    $("strat-headline").textContent = headline;
+    $("strat-stats").innerHTML = "";
+    $("ev-table").innerHTML = "";
+    var a = $("strat-assumptions"); a.innerHTML = "";
+    (lines || []).forEach(function (l) { var li = document.createElement("li"); li.textContent = l; a.appendChild(li); });
+    $("strat-warnings").textContent = "";
+  }
+
+  function renderStrategy(r) {
+    var pct = function (x) { return (x * 100).toFixed(1) + "%"; };
+    var headline = r.action + (r.raiseTo ? " to " + r.raiseTo : r.amount ? " " + r.amount : "");
+    $("strat-headline").textContent = headline;
+
+    var stats = $("strat-stats"); stats.innerHTML = "";
+    if (r.modeledEquity != null) addStat(stats, "Modelled equity", pct(r.modeledEquity));
+    if (r.equityCi) addStat(stats, "95% CI", pct(r.equityCi[0]) + "–" + pct(r.equityCi[1]));
+    if (r.potOdds) addStat(stats, "Break-even", pct(r.potOdds));
+    // Realized-equity estimate (#1): heuristic, postflop only, shown beside raw
+    // equity. The EV recommendation continues to use RAW showdown equity.
+    var realizationNote = null;
+    if (P.EquityRealization && r.modeledEquity != null) {
+      var rctx = heroRealizationCtx();
+      if (rctx && rctx.street !== "preflop") {
+        var rz = P.EquityRealization.realizedEquity(r.modeledEquity, rctx);
+        addStat(stats, "Realized eq. (est.)", pct(rz.realized) + " (×" + rz.R.toFixed(2) + ")");
+        realizationNote = rz.assumptions[0];
+      }
+    }
+
+    // EV table of the leading candidates. The last column shows the balanced
+    // (GTO reference) bluff share of the betting range for BET candidates.
+    var tbl = $("ev-table"); tbl.innerHTML = "";
+    var head = document.createElement("tr");
+    head.innerHTML = "<th>Action</th><th>Size</th><th>EV (chips)</th><th>Fold eq.</th><th title='Balanced bluff share of the betting range at this size (GTO reference)'>Bal. bluff</th>";
+    tbl.appendChild(head);
+    (r.evByAction || []).slice(0, 7).forEach(function (a) {
+      var tr = document.createElement("tr");
+      var size = a.raiseTo ? ("to " + a.raiseTo) : (a.amount ? a.amount : "—");
+      var bluff = a.bluffTarget != null ? (a.bluffTarget * 100).toFixed(0) + "%" : "—";
+      tr.innerHTML = "<td>" + a.action + "</td><td>" + size + "</td><td>" +
+        (a.ev == null ? "—" : a.ev) + "</td><td>" + (a.foldEquity != null ? (a.foldEquity * 100).toFixed(0) + "%" : "—") + "</td><td>" + bluff + "</td>";
+      tbl.appendChild(tr);
+    });
+
+    // GTO reference block (pot-geometry equilibrium; reference-only).
+    var gto = $("gto-ref"); gto.innerHTML = "";
+    if (r.equilibrium && r.equilibrium.facing) {
+      var eq = r.equilibrium;
+      gto.hidden = false;
+      gto.innerHTML =
+        '<div class="gto-title">GTO reference (size faced' +
+        (eq.betFractionOfPot != null ? " ≈ " + (eq.betFractionOfPot * 100).toFixed(0) + "% pot" : "") + ")</div>" +
+        '<div class="gto-row"><span>Min-defense freq</span><b>' + pct(eq.mdf) + "</b></div>" +
+        '<div class="gto-row"><span>Bluff must fold (α)</span><b>' + pct(eq.alpha) + "</b></div>" +
+        '<div class="gto-row"><span>Balanced value:bluff</span><b>' + (isFinite(eq.valueToBluff) ? eq.valueToBluff.toFixed(1) + ":1" : "—") + "</b></div>" +
+        '<div class="gto-note">Reference only — the recommendation above is exploitative EV, not a solver output.</div>';
+    } else if (r.equilibrium) {
+      gto.hidden = false;
+      gto.innerHTML = '<div class="gto-note">GTO reference: the “Bal. bluff” column shows the balanced bluff share for each candidate bet size. Reference only — advice is exploitative EV.</div>';
+    } else {
+      gto.hidden = true;
+    }
+
+    // Implied-odds reference for a drawing hand facing a bet.
+    var io = r.impliedOdds;
+    if (io) {
+      var row = document.createElement("div");
+      row.className = "gto-row io-row";
+      var verdict = io.justifiedNow
+        ? "pot odds already justify the call"
+        : "need to win ≥ " + Math.round(io.wMin) + " more later";
+      row.innerHTML = "<span>Draw: " + io.outs + " outs · next-card " + (io.oneCardHit * 100).toFixed(1) + "%</span><b>" + verdict + "</b>";
+      gto.hidden = false;
+      gto.appendChild(row);
+      var n = document.createElement("div");
+      n.className = "gto-note";
+      n.textContent = io.note;
+      gto.appendChild(n);
+    }
+
+    // Opponent-pool baseline (assumed priors for a zero-data opponent).
+    var pb = r.populationBaseline;
+    if (pb && pb.population && pb.population !== "default") {
+      var prow = document.createElement("div");
+      prow.className = "gto-row pop-row";
+      prow.innerHTML = "<span>Pool baseline (" + pb.population + ")</span><b>VPIP " +
+        (pb.vpip * 100).toFixed(0) + "% · PFR " + (pb.pfr * 100).toFixed(0) + "% · 3bet " + (pb.threeBet * 100).toFixed(0) + "%</b>";
+      gto.hidden = false;
+      gto.appendChild(prow);
+    }
+
+    var a = $("strat-assumptions"); a.innerHTML = "";
+    (r.assumptions || []).forEach(function (s) { var li = document.createElement("li"); li.textContent = s; a.appendChild(li); });
+    if (realizationNote) { var rli = document.createElement("li"); rli.textContent = realizationNote; a.appendChild(rli); }
+
+    var warn = $("strat-warnings");
+    warn.innerHTML = "";
+    (r.warnings || []).forEach(function (w) { var d = document.createElement("div"); d.className = "warn"; d.textContent = "⚠ " + w; warn.appendChild(d); });
+    if (r.opponentRanges && r.opponentRanges.length) {
+      var src = document.createElement("div");
+      src.className = "range-src";
+      src.textContent = "Opponent ranges: " + r.opponentRanges.map(function (o) { return "seat " + (o.seatId + 1) + " — " + o.source + " (" + o.summary + ")"; }).join("; ");
+      warn.appendChild(src);
+    }
   }
 
   function applyResults(result) {
@@ -679,9 +1106,57 @@
       state.trials = parseInt(this.value, 10); scheduleCompute();
     });
 
+    // Advanced range-EV controls.
+    $("in-advanced").addEventListener("change", function () {
+      state.advanced = this.checked;
+      $("advanced-body").hidden = !this.checked;
+      scheduleAdvanced();
+    });
+    $("in-sb").addEventListener("input", function () { state.smallBlind = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
+    $("in-bb").addEventListener("input", function () { state.bigBlind = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
+    $("in-ante").addEventListener("input", function () { state.ante = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
+    $("in-potmode").addEventListener("change", function () { state.potDisplayMode = this.value; scheduleAdvanced(); });
+    $("in-gamemode").addEventListener("change", function () {
+      state.gameMode = this.value;
+      $("rake-fields").hidden = this.value !== "cash";
+      // Sync rake state from the visible field defaults when entering cash mode,
+      // so the shown % actually applies without needing to re-type it.
+      if (this.value === "cash") {
+        state.rakePercent = Math.max(0, (parseFloat($("in-rakepct").value || "0") || 0) / 100);
+        state.rakeCap = Math.max(0, parseInt($("in-rakecap").value || "0", 10) || 0);
+      }
+      scheduleAdvanced();
+    });
+    $("in-rakepct").addEventListener("input", function () { state.rakePercent = Math.max(0, (parseFloat(this.value || "0") || 0) / 100); scheduleAdvanced(); });
+    $("in-rakecap").addEventListener("input", function () { state.rakeCap = Math.max(0, parseInt(this.value || "0", 10) || 0); scheduleAdvanced(); });
+    $("in-population").addEventListener("change", function () { state.population = this.value; scheduleAdvanced(); });
+    $("in-hero-range").addEventListener("change", function () {
+      state.heroRangeSource = this.value;
+      $("hero-range-field").hidden = this.value !== "manual";
+      if (this.value === "none") $("rvr-card").hidden = true;
+      scheduleAdvanced();
+    });
+    $("in-hero-range-text").addEventListener("input", function () { state.heroRangeText = this.value; scheduleAdvanced(); });
+    $("in-range-source").addEventListener("change", function () {
+      state.rangeSource = this.value;
+      $("manual-range-field").hidden = this.value !== "manual";
+      scheduleAdvanced();
+    });
+    $("in-range-text").addEventListener("input", function () {
+      state.manualRange = this.value;
+      var parsed = P.Ranges.parse(this.value || "");
+      $("range-summary").textContent = parsed.ok
+        ? (parsed.range.length ? P.Ranges.summary(parsed.range) : "empty range")
+        : "Invalid: " + parsed.error;
+      scheduleAdvanced();
+    });
+
     $("btn-next-hand").addEventListener("click", nextHand);
     $("btn-shuffle").addEventListener("click", shuffle);
     $("btn-reset").addEventListener("click", function () { clearTable(); scheduleAndRender(); });
+
+    var hudBtn = document.getElementById("btn-hud");
+    if (hudBtn) hudBtn.addEventListener("click", toggleHudOverlay);
 
     $("picker-close").addEventListener("click", closePicker);
     $("picker-facedown").addEventListener("click", clearSlot);
@@ -690,6 +1165,32 @@
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closePicker(); closeSheet(); } });
 
     bindSheet();
+  }
+
+  // ---------- HUD Overlay toggle (in-app, no extension required) ----------
+  // Lazily loads the same content script the browser extension injects and
+  // mounts it over this page. Reuses the equity worker and layout maths; adds
+  // no automation and reads nothing from any other site.
+  var hudScriptsLoading = false;
+  function toggleHudOverlay() {
+    if (window.PokerHUD) { window.PokerHUD.toggle(); return; }
+    if (hudScriptsLoading) return;
+    hudScriptsLoading = true;
+    loadScriptSeq(["extension/hud-layout.js", "extension/hud.js"], function (ok) {
+      hudScriptsLoading = false;
+      if (ok && window.PokerHUD) window.PokerHUD.toggle();
+    });
+  }
+  function loadScriptSeq(srcs, done) {
+    var i = 0;
+    (function next() {
+      if (i >= srcs.length) return done(true);
+      var s = document.createElement("script");
+      s.src = srcs[i++];
+      s.onload = next;
+      s.onerror = function () { done(false); };
+      document.head.appendChild(s);
+    })();
   }
 
   // ---------- Mobile bottom sheet (advice + settings) ----------
@@ -775,6 +1276,31 @@
         if (pl && pl.active !== a.active) { pl.active = a.active; changed = true; }
       });
     }
+    // Fixed-seat reading API: seats keep their identity; folding only flips the
+    // active flag, it never removes or renumbers a seat. Accepts the richer
+    // canonical shape { seatId, occupied, dealtIn, active, folded, allIn,
+    // stackBehind, streetCommitted, confidence }.
+    if (reading.seats && reading.seats.length) {
+      var maxSeat = 0;
+      reading.seats.forEach(function (s) { if (s.occupied !== false) maxSeat = Math.max(maxSeat, s.seatId); });
+      var wantN = Math.max(2, Math.min(10, maxSeat + 1));
+      if (wantN !== state.numPlayers) {
+        state.numPlayers = wantN; $("in-players").value = wantN; $("players-val").textContent = wantN;
+        ensurePlayers(); changed = true;
+      }
+      reading.seats.forEach(function (s) {
+        var pl = state.players[s.seatId];
+        if (!pl) return;
+        var active = s.active != null ? s.active : !s.folded;
+        if (pl.active !== active) { pl.active = active; changed = true; }
+        if (typeof s.stackBehind === "number" && pl.stack !== s.stackBehind) { pl.stack = s.stackBehind; changed = true; }
+        if (typeof s.streetCommitted === "number" && pl.bet !== s.streetCommitted) { pl.bet = s.streetCommitted; changed = true; }
+      });
+    }
+    if (typeof reading.buttonSeat === "number" && state.dealer !== reading.buttonSeat) {
+      state.dealer = reading.buttonSeat; changed = true;
+    }
+    if (typeof reading.potDisplayMode === "string") { state.potDisplayMode = reading.potDisplayMode; }
     // Opponents' bets from Watch, mapped to the non-hero seats in order. undefined
     // = that bet box isn't set (leave it); null = boxed but no bet -> 0.
     if (reading.bets) {

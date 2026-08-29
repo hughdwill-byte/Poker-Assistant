@@ -459,20 +459,29 @@
   // Rule: a single separator before a K/M suffix is a decimal point (1.4M);
   // all other separators are thousands groupers (990,000 / 1.234.567).
   function parseNumber(str) {
+    var p = parseNumberParts(str);
+    return p ? p.value : null;
+  }
+  // Parse into parts so callers can reason about the K/M suffix separately from
+  // the digits. Returns { value, mult, suffix, mantissaStr, seps, digits } or null.
+  function parseNumberParts(str) {
     if (!str) return null;
     // A "K" means the number it follows is in thousands (5K = 5,000), "M" millions.
     // Take the digits BEFORE the first K/M and multiply - so a stray glyph read
     // after the K (e.g. "10K." or "5K0") can't turn 10K into 100. If there's no
     // K/M the whole string is the number.
-    var mult = 1, s = str;
+    var mult = 1, s = str, suffix = null;
     var m = str.match(/[KM]/i);
-    if (m) { mult = m[0].toUpperCase() === "M" ? 1e6 : 1e3; s = str.slice(0, m.index); }
+    if (m) { suffix = m[0].toUpperCase(); mult = suffix === "M" ? 1e6 : 1e3; s = str.slice(0, m.index); }
     if (s.indexOf("?") >= 0) return null;
     var seps = (s.match(/\./g) || []).length;
     var digits = s.replace(/\./g, "");
     if (digits === "" || !/^[0-9]+$/.test(digits)) return null;
-    var val = (mult > 1 && seps === 1) ? parseFloat(s) : parseInt(digits, 10);
-    return isFinite(val) ? Math.round(val * mult) : null;
+    // With a K/M suffix a single separator is a decimal point (1.4M); otherwise
+    // separators group thousands (990,000 read as 990.000).
+    var mantissa = (suffix && seps === 1) ? parseFloat(s) : parseInt(digits, 10);
+    if (!isFinite(mantissa)) return null;
+    return { value: Math.round(mantissa * mult), mult: mult, suffix: suffix, mantissaStr: s, seps: seps, digits: digits };
   }
   // For an action-button crop, find the x where the AMOUNT begins: the right edge
   // of the widest interior BLANK gap (the space between the word and the number).
@@ -564,7 +573,8 @@
     if (!opts.labelText) amountPresent = /[0-9]/.test(str);
     // numGlyphs is every character-glyph in the amount, in order (recognised or
     // not) - used by "type what this shows" to teach the whole number at once.
-    return { str: str, value: parseNumber(str), hasDigit: /[0-9]/.test(str), amountPresent: amountPresent, unknowns: unknowns, glyphs: numGlyphs };
+    var parts = parseNumberParts(str);
+    return { str: str, value: parts ? parts.value : null, parts: parts, hasDigit: /[0-9]/.test(str), amountPresent: amountPresent, unknowns: unknowns, glyphs: numGlyphs };
   }
 
   // ---------- Corner-based card recognition (rank + suit separately) ----------
@@ -1066,6 +1076,35 @@
     if (st.stable != null) return st.stable;
     return st.num && st.num.value != null ? st.num.value : null;
   }
+  // A number region that shows a K/M suffix keeps that magnitude "sticky" for a
+  // few frames. Poker clients render thousands as "5.00K" / "50.00K"; when a
+  // frame drops the K glyph, "5.00" would otherwise parse as the thousands-
+  // grouped integer 500 - a stable-looking value 10x too small that can win the
+  // frame vote. So when a region is in K/M mode and a frame drops the suffix but
+  // the digits contain a decimal point, reapply the multiplier with the mantissa
+  // read as a DECIMAL (5.00 -> 5 -> x1000 = 5000). Genuine plain integers (no
+  // decimal point) are left untouched, and the stickiness fades once the suffix
+  // stops appearing, so a real drop from 5K down to 500 still lands correctly.
+  function correctStickySuffix(st, num) {
+    var parts = num.parts;
+    st.sufHist = st.sufHist || [];
+    if (parts && parts.digits) st.sufHist.push(parts.suffix || "");   // "", "K" or "M"
+    if (st.sufHist.length > 9) st.sufHist.shift();
+    var kc = 0, mc = 0;
+    for (var i = 0; i < st.sufHist.length; i++) {
+      if (st.sufHist[i] === "K") kc++; else if (st.sufHist[i] === "M") mc++;
+    }
+    var mult = 0;
+    if (mc >= 2 && mc >= kc) mult = 1e6;
+    else if (kc >= 2) mult = 1e3;
+    if (!mult) return;                                   // region not reliably in K/M
+    // This frame has digits, dropped the suffix, and shows a decimal point:
+    // it's a dropped-K thousands value, not a bare integer.
+    if (parts && parts.digits && !parts.suffix && parts.seps >= 1) {
+      var mant = parseFloat(parts.mantissaStr);
+      if (isFinite(mant)) num.value = Math.round(mant * mult);
+    }
+  }
   // Read + stabilise + honour the pin for one numeric region, exactly the same way
   // for the pot, the stack, the call button, my bet and every opponent bet box.
   // Sets stab[key] and returns it (or null when the box isn't traced). Shared so
@@ -1078,7 +1117,8 @@
     var st = stab[key]; if (!st) stab[key] = st = { count: 0 };
     if (st.val === val) st.count++; else { st.val = val; st.count = 1; }
     st.num = num;
-    stabiliseNum(st, num);                     // vote across recent frames
+    correctStickySuffix(st, num);              // reapply a dropped K/M so 5.00K can't read as 500
+    stabiliseNum(st, num);                     // vote across recent frames (on the corrected value)
     var pv = pinnedNumValue(key, st.stable);   // a value you typed holds until the settled read really changes
     if (pv !== undefined) st.stable = pv;
     // Track how long it has shown unknown digits, so we can prompt to teach.
@@ -1228,10 +1268,17 @@
     var seatBoxed = false;
     for (var sk = 0; sk < seatCount; sk++) { if (regions[SEAT_KEYS[sk]] || regions[SEATCARD_KEYS[sk]]) { seatBoxed = true; break; } }
     if (seatBoxed) {
-      var activeOpp = 0;
+      // FIXED SEATS: a seat that was dealt in this hand keeps its place for the
+      // whole hand. Folding flips the seat to inactive (dropped from the odds)
+      // but never shrinks the table - the six-seat hand with three players left
+      // stays a six-seat hand. We therefore count seats that are DEALT IN
+      // (active now OR folded after being dealt) toward the table size, and
+      // emit a per-seat active flag so folded seats persist but sit out.
+      var occupiedOpp = 0;
+      var seatActive = []; // per opponent seat: true=active, false=folded, null=empty
       for (var si = 0; si < seatCount; si++) {
         var key = SEAT_KEYS[si], ck = SEATCARD_KEYS[si];
-        if (!regions[key] && !regions[ck]) { activeOpp++; continue; } // seat not boxed -> assume in
+        if (!regions[key] && !regions[ck]) { occupiedOpp++; seatActive.push(true); continue; } // not boxed -> assume in
         var spotImg = regions[key] ? regionImageData(regions[key]) : null;
         var cardsImg = regions[ck] ? regionImageData(regions[ck]) : null;
         var refImg = cardsImg || spotImg;                    // used for change detection
@@ -1247,13 +1294,32 @@
         var st = stab[key], val = "seat:" + state;
         if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
         st.state = state; st.refSig = refSig;
-        var inHand = st.count >= 2 ? (state === "active") : true;   // assume active during warm-up
-        if (inHand) activeOpp++;
+        var settled = st.count >= 2;
+        var inHand = settled ? (state === "active") : true;   // assume active during warm-up
+        // Dealt in this hand = active now, or folded after having had cards.
+        var dealtInThisHand = state === "active" || (settled && state === "folded" && seatHadCards[key]);
+        if (dealtInThisHand) { occupiedOpp++; seatActive.push(inHand); }
+        else { seatActive.push(null); } // an empty (never-dealt) seat
       }
-      var n = Math.max(2, Math.min(MAX_PLAYERS, activeOpp + 1)); // + you
+      var n = Math.max(2, Math.min(MAX_PLAYERS, occupiedOpp + 1)); // dealt-in opponents + you
       var cst = stab.__seatcount, cval = "n:" + n;
       if (cst && cst.val === cval) cst.count++; else stab.__seatcount = cst = { val: cval, count: 1 };
-      if (cst.count >= 2) reading.numPlayers = n;
+      if (cst.count >= 2) {
+        reading.numPlayers = n;
+        // Map dealt-in opponent seats (in order) to the non-hero player indices,
+        // marking folded seats inactive so the seat stays put but sits out.
+        var heroIdx = (API.getInfo ? API.getInfo().heroIndex : 0);
+        var oppOrder = [];
+        for (var pi = 0; pi < n; pi++) if (pi !== heroIdx) oppOrder.push(pi);
+        var actives = [], oi2 = 0;
+        for (var s2 = 0; s2 < seatActive.length; s2++) {
+          if (seatActive[s2] === null) continue;              // skip never-dealt seats
+          var pidx = oppOrder[oi2++];
+          if (pidx == null) break;
+          actives.push({ index: pidx, active: seatActive[s2] });
+        }
+        if (actives.length) reading.actives = actives;
+      }
     }
     API.applyReading(reading);
     renderStrip();
