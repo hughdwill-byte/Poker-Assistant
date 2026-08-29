@@ -30,4 +30,8 @@ require("../js/strategy.js");
 require("../js/watch-inference.js");
 require("../js/persistence.js");
 
+// HUD Overlay layout maths (extension/) — pure functions, no DOM, so they load
+// and test under the same harness as the engine modules.
+require("../extension/hud-layout.js");
+
 module.exports = global.Poker;

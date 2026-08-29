@@ -1,0 +1,226 @@
+/*
+ * hud.css - shadow-scoped styling for the Poker Assistant HUD Overlay.
+ * Lives inside the HUD's Shadow DOM, so these rules cannot leak onto the host
+ * page and the host page's CSS cannot leak in. War-room / tactical aesthetic:
+ * dark translucent panels, corner brackets, faint scanlines, phosphor-amber
+ * accents, monospace stencil headings, status lights.
+ *
+ * Accessibility: AA-contrast text on the panel grounds, visible focus rings,
+ * and all motion gated behind :not([data-reduced-motion]).
+ */
+
+:host { all: initial; }
+
+.hud-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;                 /* empty areas pass clicks through */
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", Menlo, monospace;
+  --hud-bg: rgba(10, 14, 12, 0.90);
+  --hud-bg-solid: #0a0e0c;
+  --hud-edge: #1c2a22;
+  --hud-amber: #ffb02e;
+  --hud-phos: #57ff9a;
+  --hud-ink: #d7e4dc;                   /* body text: ~10:1 on --hud-bg */
+  --hud-dim: #8fa89b;
+  --hud-red: #ff6b6b;
+  --hud-go: #57ff9a;
+  --hud-no: #ff6b6b;
+  --hud-hold: #ffb02e;
+  color: var(--hud-ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* ---- panels -------------------------------------------------------------- */
+.hud-box {
+  position: absolute;
+  pointer-events: auto;
+  background:
+    repeating-linear-gradient(0deg, rgba(87,255,154,0.035) 0 1px, transparent 1px 3px),
+    var(--hud-bg);
+  border: 1px solid var(--hud-edge);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 10px 30px rgba(0,0,0,0.55);
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  min-height: 140px;
+  backdrop-filter: blur(2px);
+  outline: none;
+}
+.hud-box:focus-visible { box-shadow: 0 0 0 2px var(--hud-amber), 0 10px 30px rgba(0,0,0,0.55); }
+
+/* corner-bracket framing */
+.hud-box::before, .hud-box::after {
+  content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none;
+  border-color: var(--hud-amber); border-style: solid;
+}
+.hud-box::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.hud-box::after  { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+.hud-box-title {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  cursor: grab;
+  background: linear-gradient(180deg, rgba(255,176,46,0.10), rgba(255,176,46,0.02));
+  border-bottom: 1px solid var(--hud-edge);
+  user-select: none;
+  touch-action: none;
+}
+.hud-dragging .hud-box-title { cursor: grabbing; }
+.hud-title-text { font-weight: 700; letter-spacing: 0.22em; color: var(--hud-amber); font-size: 12px; }
+.hud-title-brackets { color: var(--hud-phos); }
+.hud-drag-hint { margin-left: auto; color: var(--hud-dim); }
+
+.hud-box-body { flex: 1 1 auto; overflow: hidden; padding: 10px; }
+.hud-scroll { overflow-y: auto; overflow-x: hidden; }
+.hud-scroll::-webkit-scrollbar { width: 8px; }
+.hud-scroll::-webkit-scrollbar-thumb { background: var(--hud-edge); border-radius: 4px; }
+
+/* ---- inputs -------------------------------------------------------------- */
+.hud-inputs {
+  display: grid; grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 6px; margin-bottom: 10px;
+}
+.hud-field { display: flex; flex-direction: column; gap: 2px; }
+.hud-field-label { font-size: 10px; letter-spacing: 0.12em; color: var(--hud-dim); text-transform: uppercase; }
+.hud-field-input {
+  background: #05100b; color: var(--hud-ink);
+  border: 1px solid var(--hud-edge); border-radius: 2px;
+  padding: 4px 6px; font: inherit; font-size: 12px; width: 100%;
+}
+.hud-field-input:focus-visible { outline: 2px solid var(--hud-amber); outline-offset: 1px; border-color: var(--hud-amber); }
+
+/* ---- felt / table -------------------------------------------------------- */
+.hud-felt {
+  border: 1px solid var(--hud-edge); border-radius: 6px;
+  background: radial-gradient(ellipse at center, #123024 0%, #0a1c15 70%, #07130e 100%);
+  padding: 10px; display: flex; flex-direction: column; gap: 8px; align-items: center;
+}
+.hud-felt-seats { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+.hud-seat {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--hud-edge); background: #0c1712; color: var(--hud-dim);
+  font-size: 10px; display: flex; align-items: center; justify-content: center;
+}
+.hud-seat-you { border-color: var(--hud-amber); color: var(--hud-amber); font-weight: 700; }
+.hud-felt-center { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.hud-cards { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.hud-card {
+  min-width: 24px; padding: 3px 5px; border-radius: 3px;
+  background: #f4f4ef; color: #14140f; font-weight: 700; font-size: 13px; text-align: center;
+  border: 1px solid #c9c9bd;
+}
+.hud-card-red { color: #c0271f; }
+.hud-pot { color: var(--hud-amber); letter-spacing: 0.12em; font-size: 12px; }
+.hud-hero-row { display: flex; align-items: center; gap: 8px; }
+.hud-hero-label { color: var(--hud-phos); letter-spacing: 0.16em; font-size: 11px; }
+
+/* ---- intel readout ------------------------------------------------------- */
+.hud-intel-empty { color: var(--hud-dim); padding: 8px 2px; }
+.hud-verdict {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; margin-bottom: 8px; border-radius: 4px;
+  border: 1px solid var(--hud-edge);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+}
+.hud-verdict-word { font-size: 18px; font-weight: 800; letter-spacing: 0.08em; }
+.hud-verdict-eq { color: var(--hud-dim); font-size: 12px; }
+.hud-verdict-go .hud-verdict-word { color: var(--hud-go); text-shadow: 0 0 8px rgba(87,255,154,0.35); }
+.hud-verdict-no .hud-verdict-word { color: var(--hud-no); text-shadow: 0 0 8px rgba(255,107,107,0.30); }
+.hud-verdict-hold .hud-verdict-word { color: var(--hud-hold); text-shadow: 0 0 8px rgba(255,176,46,0.30); }
+
+.hud-readout { display: flex; flex-direction: column; gap: 2px; }
+.hud-readout-row {
+  display: flex; justify-content: space-between; gap: 10px;
+  padding: 4px 6px; border-bottom: 1px dotted rgba(143,168,155,0.18);
+}
+.hud-readout-k { color: var(--hud-dim); }
+.hud-readout-v { color: var(--hud-ink); text-align: right; font-variant-numeric: tabular-nums; }
+
+.hud-labeled { margin-top: 10px; }
+.hud-labeled-h { color: var(--hud-amber); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 4px; }
+.hud-assumptions { margin: 0; padding-left: 16px; color: var(--hud-dim); font-size: 11px; }
+.hud-assumptions li { margin: 2px 0; }
+.hud-warnbox { margin-top: 8px; }
+.hud-warn { color: var(--hud-red); font-size: 11px; padding: 3px 0; }
+
+/* ---- status light -------------------------------------------------------- */
+.hud-status-light {
+  margin-left: auto; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--hud-dim); box-shadow: 0 0 6px currentColor;
+}
+.hud-status-light[data-state="go"]  { background: var(--hud-go); color: var(--hud-go); }
+.hud-status-light[data-state="hold"],
+.hud-status-light[data-state="busy"] { background: var(--hud-amber); color: var(--hud-amber); }
+.hud-status-light[data-state="warn"] { background: var(--hud-red); color: var(--hud-red); }
+.hud-status-light[data-state="idle"] { background: var(--hud-dim); color: var(--hud-dim); }
+
+/* ---- taskbar (docked) ---------------------------------------------------- */
+.hud-taskbar {
+  position: absolute; left: 0; right: 0;
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 12px; min-height: 40px;
+  background:
+    repeating-linear-gradient(90deg, rgba(255,176,46,0.05) 0 2px, transparent 2px 6px),
+    var(--hud-bg-solid);
+  border: 1px solid var(--hud-edge);
+}
+.hud-taskbar[data-edge="bottom"] { bottom: 0; border-bottom: none; }
+.hud-taskbar[data-edge="top"] { top: 0; border-top: none; }
+.hud-taskbar-brand { color: var(--hud-amber); font-weight: 700; letter-spacing: 0.2em; font-size: 12px; }
+.hud-taskbar-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+
+.hud-btn {
+  pointer-events: auto;
+  background: #0c1712; color: var(--hud-ink);
+  border: 1px solid var(--hud-edge); border-radius: 2px;
+  padding: 6px 10px; font: inherit; font-size: 11px; letter-spacing: 0.08em;
+  cursor: pointer; white-space: nowrap;
+}
+.hud-btn:hover { border-color: var(--hud-amber); color: var(--hud-amber); }
+.hud-btn:focus-visible { outline: 2px solid var(--hud-amber); outline-offset: 1px; }
+.hud-btn-close { border-color: #6a2016; color: var(--hud-red); }
+.hud-btn-close:hover { background: #2a0d09; border-color: var(--hud-red); color: #fff; }
+
+/* ---- resize handles ------------------------------------------------------ */
+.hud-handle { position: absolute; pointer-events: auto; touch-action: none; }
+.hud-handle-n, .hud-handle-s { left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
+.hud-handle-e, .hud-handle-w { top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.hud-handle-n { top: -4px; } .hud-handle-s { bottom: -4px; }
+.hud-handle-e { right: -4px; } .hud-handle-w { left: -4px; }
+.hud-handle-ne, .hud-handle-nw, .hud-handle-se, .hud-handle-sw { width: 14px; height: 14px; }
+.hud-handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.hud-handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.hud-handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.hud-handle-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+/* a visible grip on the corners */
+.hud-handle-se::after {
+  content: ""; position: absolute; right: 2px; bottom: 2px; width: 7px; height: 7px;
+  border-right: 2px solid var(--hud-amber); border-bottom: 2px solid var(--hud-amber);
+}
+
+/* ================= adaptive breakpoints ================================== */
+/* Boxes get data-bp = full | compact | mini from the ResizeObserver so their
+   internal UI stays complete and legible rather than clipping. */
+.hud-box[data-bp="compact"] .hud-inputs { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.hud-box[data-bp="compact"] .hud-verdict-word { font-size: 16px; }
+.hud-box[data-bp="mini"] .hud-inputs { grid-template-columns: 1fr 1fr; gap: 4px; }
+.hud-box[data-bp="mini"] .hud-field-label { font-size: 9px; }
+.hud-box[data-bp="mini"] .hud-felt-seats { display: none; }        /* drop non-essential chrome first */
+.hud-box[data-bp="mini"] .hud-title-text { letter-spacing: 0.1em; }
+.hud-box[data-bp="mini"] .hud-readout-row { flex-direction: column; gap: 0; }
+.hud-box[data-bp="mini"] .hud-readout-v { text-align: left; color: var(--hud-amber); }
+.hud-box[data-bp="mini"] .hud-verdict { flex-direction: column; align-items: flex-start; }
+.hud-box[data-bp="mini"] .hud-drag-hint { display: none; }
+
+/* Simple vs advanced density (taskbar toggle adds hud-advanced on :host). */
+:host(.hud-advanced) .hud-readout-row { padding: 5px 6px; }
+
+/* ---- motion / reduced-motion -------------------------------------------- */
+.hud-box, .hud-btn, .hud-status-light { transition: box-shadow 120ms ease, border-color 120ms ease, color 120ms ease; }
+.hud-root[data-reduced-motion] .hud-box,
+.hud-root[data-reduced-motion] .hud-btn,
+.hud-root[data-reduced-motion] .hud-status-light { transition: none !important; }
+.hud-root[data-reduced-motion] .hud-verdict-word { text-shadow: none; }

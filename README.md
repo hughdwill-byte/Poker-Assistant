@@ -231,6 +231,74 @@ follow the rules of any site you're on.
 
 ---
 
+## 🎯 HUD Overlay mode (browser extension)
+
+A **war-style tactical HUD** you can float over any tab — a study window, a
+play-money table, or a hand replayer — instead of keeping the app in a separate
+window. It ships as a **Manifest V3 extension** (Chrome/Edge) and is also
+reachable in-app via the **🎯 HUD** button in the top bar (no install needed
+when you're already on the Poker Assistant page).
+
+**Positioning — read this first.** The HUD is for **practice, play-money, and
+hand-replay study**. It is **advisory only**: it **reads nothing** from the
+underlying site's DOM and performs **no poker action of any kind**. Every number
+it shows is computed by the *existing* equity engine from inputs **you type into
+the HUD** — exactly the same manual inputs the main app takes. It does not
+scrape live tables and it never clicks, bets, or folds for you. Follow the rules
+of any site you use it on.
+
+### The three panels
+1. **Table box** — a compact visual felt (hero cards, board, pot, seat ring)
+   with a small input strip for your hand, the board, player count, pot, to-call
+   and stack. Freely movable and resizable.
+2. **Info panel** — a scrollable readout: verdict, equity vs random opponents,
+   break-even (pot odds), EV of calling, EV by action, recommended action, SPR,
+   effective stack, opponent-range source, confidence, assumptions and warnings.
+   Freely movable and resizable.
+3. **Taskbar** — docked to the top or bottom border (flip with **FLIP**); holds
+   all controls: SIMPLE/ADVANCED density, STREET, NEXT hand, RESET layout, and
+   **✕ CLOSE**, which removes the HUD cleanly and restores the page.
+
+### Interaction & adaptive layout
+- Both boxes drag anywhere and resize to any rectangle via edge/corner handles;
+  they **clamp** inside the viewport and **snap** to borders. Clicking a panel
+  brings it to the front.
+- **Keyboard-operable:** focus a box and move it with the Arrow keys, resize with
+  **Shift+Arrow**; **Esc** closes the HUD. Focus rings are always visible and
+  panels carry ARIA roles/labels.
+- **Adaptive reflow:** a `ResizeObserver` drives container-style breakpoints, so
+  each box's internal UI regrids and condenses as it shrinks and is **never
+  clipped** — below a threshold it collapses to a compact `mini` form.
+- Positions, sizes and the Taskbar edge **persist** (`chrome.storage.local` in
+  the extension, `localStorage` in-app) and **RESET** restores defaults.
+
+### War-room aesthetic & accessibility
+Dark, semi-transparent panels with corner-bracket framing, faint scanlines,
+amber / phosphor-green accents, monospace stencil headings, and a confidence
+status-light. It honours **`prefers-reduced-motion`** and keeps text at **WCAG
+AA** contrast.
+
+### Install & architecture
+- `chrome://extensions` → **Developer mode** → **Load unpacked** → pick the repo
+  root (the folder with `manifest.json`). Click the amber reticle icon on any
+  page to toggle the HUD.
+- Minimal permissions: **`activeTab`, `scripting`, `storage`** — no host
+  permissions, so it only injects into the tab you click on.
+- The HUD mounts inside a **Shadow DOM** (site CSS can't leak in, HUD CSS can't
+  leak out) as a full-viewport passthrough layer (empty areas pass clicks
+  through to the page). It reuses the existing equity **Web Worker** via
+  `chrome.runtime.getURL` and the **unchanged** `js/` math modules.
+- No build step, no bundler, no new runtime dependencies. Layout maths live in
+  `extension/hud-layout.js` and are unit-tested (`test/hud-layout.test.js`).
+- **Limitation:** on a page whose Content-Security-Policy blocks web workers the
+  equity engine can't start there; the HUD still mounts and says so, and layout,
+  controls and revert keep working.
+
+See **[docs/hud-overlay-qa.md](docs/hud-overlay-qa.md)** for the full manual QA
+checklist.
+
+---
+
 ## 🧮 The maths (and why it's trustworthy)
 
 Let `e` be your equity — your probability of winning the pot, with ties counted
@@ -384,6 +452,15 @@ js/app.js             UI, state, Simple + Advanced modes, the poker-table view
 js/watch.js           Watch mode: live screen-capture card recognition
 test/run.js           Test runner (npm test) aggregating all suites below
 test/*.test.js        Focused correctness suites (dependency-free)
+
+manifest.json             MV3 extension manifest (activeTab/scripting/storage)
+extension/background.js   Service worker: toolbar click injects & toggles the HUD
+extension/hud.js          HUD content script (Shadow DOM, panels, drag/resize, revert)
+extension/hud-layout.js   Pure layout maths: clamp / snap / breakpoints / persistence
+extension/hud.css         Shadow-scoped war-style HUD styling
+extension/icons/          Toolbar action icons (16/48/128)
+test/hud-layout.test.js   Unit tests for the HUD layout maths
+docs/hud-overlay-qa.md    HUD Overlay manual QA checklist
 ```
 
 The engine files attach to a shared `Poker` namespace and run **unchanged** in

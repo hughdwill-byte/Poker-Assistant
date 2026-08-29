@@ -24,6 +24,7 @@ var suites = [
   "./implied-odds.test",
   "./priors-recency.test",
   "./watch-inference.test",
+  "./hud-layout.test",
 ];
 
 suites.forEach(function (name) {

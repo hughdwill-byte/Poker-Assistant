@@ -1155,6 +1155,9 @@
     $("btn-shuffle").addEventListener("click", shuffle);
     $("btn-reset").addEventListener("click", function () { clearTable(); scheduleAndRender(); });
 
+    var hudBtn = document.getElementById("btn-hud");
+    if (hudBtn) hudBtn.addEventListener("click", toggleHudOverlay);
+
     $("picker-close").addEventListener("click", closePicker);
     $("picker-facedown").addEventListener("click", clearSlot);
     $("picker-clear").addEventListener("click", clearSlot);
@@ -1162,6 +1165,32 @@
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closePicker(); closeSheet(); } });
 
     bindSheet();
+  }
+
+  // ---------- HUD Overlay toggle (in-app, no extension required) ----------
+  // Lazily loads the same content script the browser extension injects and
+  // mounts it over this page. Reuses the equity worker and layout maths; adds
+  // no automation and reads nothing from any other site.
+  var hudScriptsLoading = false;
+  function toggleHudOverlay() {
+    if (window.PokerHUD) { window.PokerHUD.toggle(); return; }
+    if (hudScriptsLoading) return;
+    hudScriptsLoading = true;
+    loadScriptSeq(["extension/hud-layout.js", "extension/hud.js"], function (ok) {
+      hudScriptsLoading = false;
+      if (ok && window.PokerHUD) window.PokerHUD.toggle();
+    });
+  }
+  function loadScriptSeq(srcs, done) {
+    var i = 0;
+    (function next() {
+      if (i >= srcs.length) return done(true);
+      var s = document.createElement("script");
+      s.src = srcs[i++];
+      s.onload = next;
+      s.onerror = function () { done(false); };
+      document.head.appendChild(s);
+    })();
   }
 
   // ---------- Mobile bottom sheet (advice + settings) ----------
