@@ -20,6 +20,7 @@ require("../js/range-equity.js");
 require("../js/action-ev.js");
 require("../js/draw-odds.js");
 require("../js/equilibrium.js");
+require("../js/implied-odds.js");
 require("../js/tournament-icm.js");
 require("../js/strategy.js");
 require("../js/watch-inference.js");

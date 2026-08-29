@@ -235,3 +235,27 @@ and a balanced-bluff column per candidate bet size — and it **never** override
 the EV engine, the opponent-model fold estimate, or legal-action generation.
 Wiring these into live advice (MDF-driven defense, mixed-strategy frequencies)
 is deferred; see [future-math-roadmap.md](future-math-roadmap.md) #5, #6, #7.
+
+## 15. Implied and reverse-implied odds (Phase C, Wave 0.2)
+
+`js/implied-odds.js` prices a draw beyond the current pot (spec §9). With
+`P` = pot before the call, `C` = the call, `e` = the draw's hit probability
+(NOT the full showdown equity), `W` = net future chips won after hitting:
+
+```
+simpleEV = e·(P + W) − (1 − e)·C          // reduces to EV_call when W = 0
+W_min    = C·(1 − e)/e − P                // minimum future win to break even
+```
+
+`W_min ≤ 0` means immediate pot odds already justify the call. A structured
+`drawEV()` enumerates five inspectable branches — hit+best+extra, hit+best+no
+extra, hit+second-best (reverse implied), miss-realised, miss-forced-off — so
+implied and reverse-implied odds coexist without a single "magic multiplier".
+
+The Advanced UI shows, for a drawing hand facing a bet: nominal (undiscounted)
+outs, the **next-card** hit probability (spec §4.1 one-card rule — the future
+cost isn't fixed, so the two-card figure is not used), and `W_min`. It assumes
+**no** future winnings, so the displayed W_min is exactly the break-even future
+win the caller must find. This is reference-only; it does not change the EV
+recommendation. Out discounting and a per-opponent future-bet model are deferred
+(see [future-math-roadmap.md](future-math-roadmap.md) #2).

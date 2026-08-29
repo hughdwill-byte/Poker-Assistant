@@ -112,6 +112,30 @@
       equilibrium = { facing: false, note: "Balanced value:bluff targets are shown per candidate bet size." };
     }
 
+    // Implied-odds reference: when the hero holds a DRAW facing a bet, price the
+    // call on the next card (spec §4.1 one-card rule) and show the minimum extra
+    // that must be won later (W_min). Future winnings are NOT assumed - W_min is
+    // exactly the break-even future win. Reference-only.
+    var impliedOdds = null;
+    var IO = Poker.ImpliedOdds, HF = Poker.HandFeatures, DO = Poker.DrawOdds;
+    if (C > 0 && IO && HF && DO) {
+      var iboard = (dc.board || []).filter(function (c) { return c != null; });
+      if (iboard.length === 3 || iboard.length === 4) {
+        var feats = HF.extract(dc.heroCards, iboard);
+        var outs = IO.nominalOuts(feats);
+        if (outs > 0) {
+          var hit = iboard.length === 3 ? DO.hitOnTurnFromFlop(outs) : DO.hitOnRiverFromTurn(outs);
+          impliedOdds = {
+            outs: outs,
+            oneCardHit: hit,
+            wMin: IO.wMin(P, C, hit),
+            justifiedNow: IO.justifiedNow(P, C, hit),
+            note: "Nominal (undiscounted) outs, priced on the next card; no future winnings assumed.",
+          };
+        }
+      }
+    }
+
     // Model confidence: shrink with wide CIs, multiway approximation and sparse
     // opponent samples.
     var ciWidth = ci[1] - ci[0];
@@ -171,6 +195,7 @@
       warnings: warnings.concat(eqRes.warning ? [eqRes.warning] : []),
       explanation: explanation,
       equilibrium: equilibrium,
+      impliedOdds: impliedOdds,
       equityDetail: eqRes,
     };
   }

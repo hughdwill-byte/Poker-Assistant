@@ -24,14 +24,19 @@ throws until enabled). Neither feeds a recommendation.
   fast approximation of something real, not a fudge factor.
 
 ### 2. Implied and reverse-implied odds
-- **Why:** the engine currently prices only the immediate pot. Draws and
-  dominated hands need future streets.
-- **Hook:** add branches to `action-ev.js` per spec §9.2 (miss/fold,
-  improve+win-0, improve+win-future, improve+lose, fail-to-realize); expose
-  `W_min = C(1−e)/e − P`.
-- **Needs first:** a per-opponent future-bet model (how often, how big they pay
-  after the card) and stack/position context; otherwise implied odds become an
-  unbounded fudge multiplier (explicitly warned against by the spec).
+- **Status:** **shipped (Phase C, Wave 0.2)** as `js/implied-odds.js` — the
+  5-branch tree (hit+best+extra / hit+best+no-extra / hit+second-best /
+  miss-realised / miss-forced-off), `simpleEV = e(P+W) − (1−e)C`, and
+  `W_min = C(1−e)/e − P`, plus nominal-outs mapping. The Advanced UI shows a
+  draw's outs, next-card hit %, and W_min ("pot odds justify now" vs "need ≥ X
+  more later") — **reference-only**, and it assumes **no** future winnings (W=0),
+  so W_min is exactly the break-even future win the caller must find.
+- **Why:** the immediate pot alone under-prices draws and over-prices dominated
+  hands.
+- **Remaining:** a per-opponent future-bet model (how often / how big they pay
+  after the card) to turn W_min into a live +EV/−EV call decision, and out
+  discounting (dirty outs). Until then the reference deliberately leaves the
+  future-win estimate to the user rather than inventing a multiplier.
 
 ### 3. Range-vs-range equity distributions & buckets
 - **Why:** point equity (hero-vs-range) hides variance; two hands with equal

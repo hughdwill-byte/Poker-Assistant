@@ -573,6 +573,23 @@
       gto.hidden = true;
     }
 
+    // Implied-odds reference for a drawing hand facing a bet.
+    var io = r.impliedOdds;
+    if (io) {
+      var row = document.createElement("div");
+      row.className = "gto-row io-row";
+      var verdict = io.justifiedNow
+        ? "pot odds already justify the call"
+        : "need to win ≥ " + Math.round(io.wMin) + " more later";
+      row.innerHTML = "<span>Draw: " + io.outs + " outs · next-card " + (io.oneCardHit * 100).toFixed(1) + "%</span><b>" + verdict + "</b>";
+      gto.hidden = false;
+      gto.appendChild(row);
+      var n = document.createElement("div");
+      n.className = "gto-note";
+      n.textContent = io.note;
+      gto.appendChild(n);
+    }
+
     var a = $("strat-assumptions"); a.innerHTML = "";
     (r.assumptions || []).forEach(function (s) { var li = document.createElement("li"); li.textContent = s; a.appendChild(li); });
 
