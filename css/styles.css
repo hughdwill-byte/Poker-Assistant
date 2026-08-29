@@ -684,3 +684,17 @@ body {
 .watch-chips { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 .chip-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 5px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---- Advanced range-EV strategy ---- */
+.field-row { display: flex; gap: 8px; }
+.field-row .field { flex: 1; }
+#advanced-body { margin-top: 6px; }
+#strategy-card { margin-top: 12px; }
+.ev-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.ev-table th, .ev-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--panel-2); }
+.ev-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.ev-table tr:first-child td { font-weight: 700; }
+.strat-warnings { margin-top: 8px; font-size: 12px; }
+.strat-warnings .warn { color: var(--bad); margin: 3px 0; }
+.strat-warnings .range-src { color: var(--muted); margin-top: 6px; line-height: 1.4; }
+#range-summary { margin-top: 4px; }

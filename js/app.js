@@ -24,6 +24,14 @@
     players: [],                            // { name, cards:[id|null,id|null], active, stack }
     dealer: null,                           // seat index with the dealer button (for position)
     lastResults: null,
+    // Advanced range-EV mode.
+    advanced: false,
+    smallBlind: 5,
+    bigBlind: 10,
+    ante: 0,
+    potDisplayMode: "includes-current-bets",
+    rangeSource: "uniform",
+    manualRange: "QQ+, AK, AQs, AJs, KQs",
   };
 
   function defaultName(i) { return "Player " + (i + 1); }
@@ -45,12 +53,15 @@
   var pickerEl = $("picker"), pickerGrid = $("picker-grid"), pickerTitle = $("picker-title");
 
   // ---------- Worker ----------
-  var worker = null, jobId = 0, pendingId = 0;
+  // Job ids are tracked per channel so a strategy job never clobbers the uniform
+  // equity job (and each channel ignores its own stale results).
+  var worker = null, jobId = 0, pendingId = 0, pendingStrategyId = 0;
   try {
     worker = new Worker("js/worker.js");
     worker.onmessage = function (e) {
-      if (e.data.id !== pendingId) return; // ignore stale
-      applyResults(e.data.result);
+      var d = e.data || {};
+      if (d.id === pendingId) applyResults(d.result);
+      else if (d.id === pendingStrategyId) applyStrategy(d.result);
     };
     worker.onerror = function () { worker = null; };
   } catch (err) { worker = null; }
@@ -58,13 +69,25 @@
   function runSimulation(cfg) {
     pendingId = ++jobId;
     if (worker) {
-      worker.postMessage({ id: pendingId, cfg: cfg });
+      worker.postMessage({ id: pendingId, type: "simulate", cfg: cfg });
     } else {
-      // Synchronous fallback (e.g. opened directly from file://).
       var myId = pendingId;
       setTimeout(function () {
         var res = P.simulate(cfg);
         if (myId === pendingId) applyResults(res);
+      }, 0);
+    }
+  }
+
+  function runStrategy(cfg) {
+    pendingStrategyId = ++jobId;
+    if (worker) {
+      worker.postMessage({ id: pendingStrategyId, type: "strategy", cfg: cfg });
+    } else {
+      var myId = pendingStrategyId;
+      setTimeout(function () {
+        var res = P.Strategy.rangeRecommend(cfg);
+        if (myId === pendingStrategyId) applyStrategy(res);
       }, 0);
     }
   }
@@ -377,6 +400,163 @@
     };
     simStatus.textContent = "Calculating…";
     runSimulation(cfg);
+    scheduleAdvanced();
+  }
+
+  // ---------- Advanced range-EV strategy ----------
+  var advTimer = null;
+  function scheduleAdvanced() {
+    if (advTimer) clearTimeout(advTimer);
+    advTimer = setTimeout(computeAdvanced, 160);
+  }
+
+  function positionOfSeat(seatIndex) {
+    // Position label from the dealer button, over the CURRENTLY active seats.
+    if (state.dealer == null) return null;
+    var active = [];
+    for (var i = 0; i < state.numPlayers; i++) if (state.players[i].active) active.push(i);
+    if (active.length < 2) return null;
+    var order = ["BTN", "SB", "BB", "UTG", "UTG+1", "MP", "MP+1", "HJ", "CO"];
+    // Walk clockwise from the button across active seats.
+    var seq = [];
+    for (var step = 0; step < state.numPlayers; step++) {
+      var s = (state.dealer + step) % state.numPlayers;
+      if (state.players[s].active) seq.push(s);
+    }
+    if (seq.length === 2) { // heads-up
+      return seatIndex === seq[0] ? "BTN" : "BB";
+    }
+    var idx = seq.indexOf(seatIndex);
+    if (idx < 0) return null;
+    return order[Math.min(idx, order.length - 1)];
+  }
+
+  function buildOpponentRange(seatIndex) {
+    var Ranges = P.Ranges;
+    var blockers = allUsedCards();
+    var base, source;
+    if (state.rangeSource === "manual") {
+      var parsed = Ranges.parse(state.manualRange || "");
+      if (!parsed.ok || !parsed.range.length) { base = Ranges.fullRange(); source = "uniform (manual range invalid: " + (parsed.error || "empty") + ")"; }
+      else { base = parsed.range; source = "manual range"; }
+    } else if (state.rangeSource === "position") {
+      var pos = positionOfSeat(seatIndex);
+      var prior = P.RangePresets.priorFor({ position: pos });
+      base = prior.range; source = prior.source;
+    } else {
+      base = Ranges.fullRange(); source = "uniform (versus random hands)";
+    }
+    var cleaned = Ranges.normalise(Ranges.removeBlockers(base, blockers));
+    return { range: cleaned, source: source };
+  }
+
+  function computeAdvanced() {
+    var card = $("strategy-card");
+    if (!state.advanced) { if (card) card.hidden = true; return; }
+    if (!card) return;
+    card.hidden = false;
+    var hero = state.players[state.heroIndex];
+
+    if (state.decks > 1) {
+      renderStrategyMessage("Range strategy is one-deck only",
+        ["Advanced range modelling is disabled for more than one deck.",
+         "Switch decks back to 1, or use Simple mode's uniform equity."]);
+      return;
+    }
+    if (!hero || knownCards(hero).length < 2) {
+      renderStrategyMessage("Enter both hero cards", ["Range/EV strategy needs your exact two cards."]);
+      return;
+    }
+    var opponents = [];
+    for (var i = 0; i < state.numPlayers; i++) {
+      if (i === state.heroIndex || !state.players[i].active) continue;
+      var built = buildOpponentRange(i);
+      if (!built.range.length) continue;
+      opponents.push({ seatId: i, range: built.range, source: built.source });
+    }
+    if (!opponents.length) {
+      renderStrategyMessage("No active opponents", ["Add at least one active opponent to model a range."]);
+      return;
+    }
+
+    var P0 = canonicalPotForAdvanced();
+    var C0 = Math.max(0, state.toCall || 0);
+    var dc = {
+      heroCards: knownCards(hero),
+      board: state.board.filter(function (c) { return c !== null; }),
+      deadCards: state.dead.slice(),
+      P: P0, C: C0,
+      heroStreetCommitted: 0,
+      heroStackBehind: hero.stack,
+      currentBetTo: C0,
+      lastFullRaiseSize: state.bigBlind || 0,
+      bigBlind: state.bigBlind || 0,
+      opponents: opponents,
+      trials: Math.min(state.trials, 40000),
+    };
+    $("strat-headline").textContent = "Calculating range EV…";
+    runStrategy(dc);
+  }
+
+  function canonicalPotForAdvanced() {
+    var pot = Math.max(0, state.pot || 0), toCall = Math.max(0, state.toCall || 0);
+    switch (state.potDisplayMode) {
+      case "excludes-current-bets": return pot + toCall; // add the bet hero faces
+      case "manual-canonical": return pot;
+      default: return pot; // includes-current-bets: hero has not yet added the call
+    }
+  }
+
+  function applyStrategy(result) {
+    if (!result) return;
+    if (result.error) { renderStrategyMessage("Range strategy unavailable", [result.error]); return; }
+    renderStrategy(result);
+  }
+
+  function renderStrategyMessage(headline, lines) {
+    $("strat-headline").textContent = headline;
+    $("strat-stats").innerHTML = "";
+    $("ev-table").innerHTML = "";
+    var a = $("strat-assumptions"); a.innerHTML = "";
+    (lines || []).forEach(function (l) { var li = document.createElement("li"); li.textContent = l; a.appendChild(li); });
+    $("strat-warnings").textContent = "";
+  }
+
+  function renderStrategy(r) {
+    var pct = function (x) { return (x * 100).toFixed(1) + "%"; };
+    var headline = r.action + (r.raiseTo ? " to " + r.raiseTo : r.amount ? " " + r.amount : "");
+    $("strat-headline").textContent = headline;
+
+    var stats = $("strat-stats"); stats.innerHTML = "";
+    if (r.modeledEquity != null) addStat(stats, "Modelled equity", pct(r.modeledEquity));
+    if (r.equityCi) addStat(stats, "95% CI", pct(r.equityCi[0]) + "–" + pct(r.equityCi[1]));
+    if (r.potOdds) addStat(stats, "Break-even", pct(r.potOdds));
+
+    // EV table of the leading candidates.
+    var tbl = $("ev-table"); tbl.innerHTML = "";
+    var head = document.createElement("tr");
+    head.innerHTML = "<th>Action</th><th>Size</th><th>EV (chips)</th><th>Fold eq.</th>";
+    tbl.appendChild(head);
+    (r.evByAction || []).slice(0, 7).forEach(function (a) {
+      var tr = document.createElement("tr");
+      var size = a.raiseTo ? ("to " + a.raiseTo) : (a.amount ? a.amount : "—");
+      tr.innerHTML = "<td>" + a.action + "</td><td>" + size + "</td><td>" +
+        (a.ev == null ? "—" : a.ev) + "</td><td>" + (a.foldEquity != null ? (a.foldEquity * 100).toFixed(0) + "%" : "—") + "</td>";
+      tbl.appendChild(tr);
+    });
+
+    var a = $("strat-assumptions"); a.innerHTML = "";
+    (r.assumptions || []).forEach(function (s) { var li = document.createElement("li"); li.textContent = s; a.appendChild(li); });
+
+    var warn = $("strat-warnings");
+    warn.innerHTML = "";
+    (r.warnings || []).forEach(function (w) { var d = document.createElement("div"); d.className = "warn"; d.textContent = "⚠ " + w; warn.appendChild(d); });
+    if (r.opponentRanges && r.opponentRanges.length) {
+      var src = document.createElement("div");
+      src.className = "range-src";
+      src.textContent = "Opponent ranges: " + r.opponentRanges.map(function (o) { return "seat " + (o.seatId + 1) + " — " + o.source + " (" + o.summary + ")"; }).join("; ");
+      warn.appendChild(src);
+    }
   }
 
   function applyResults(result) {
@@ -679,6 +859,30 @@
       state.trials = parseInt(this.value, 10); scheduleCompute();
     });
 
+    // Advanced range-EV controls.
+    $("in-advanced").addEventListener("change", function () {
+      state.advanced = this.checked;
+      $("advanced-body").hidden = !this.checked;
+      scheduleAdvanced();
+    });
+    $("in-sb").addEventListener("input", function () { state.smallBlind = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
+    $("in-bb").addEventListener("input", function () { state.bigBlind = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
+    $("in-ante").addEventListener("input", function () { state.ante = Math.max(0, parseInt(this.value || "0", 10)); scheduleAdvanced(); });
+    $("in-potmode").addEventListener("change", function () { state.potDisplayMode = this.value; scheduleAdvanced(); });
+    $("in-range-source").addEventListener("change", function () {
+      state.rangeSource = this.value;
+      $("manual-range-field").hidden = this.value !== "manual";
+      scheduleAdvanced();
+    });
+    $("in-range-text").addEventListener("input", function () {
+      state.manualRange = this.value;
+      var parsed = P.Ranges.parse(this.value || "");
+      $("range-summary").textContent = parsed.ok
+        ? (parsed.range.length ? P.Ranges.summary(parsed.range) : "empty range")
+        : "Invalid: " + parsed.error;
+      scheduleAdvanced();
+    });
+
     $("btn-next-hand").addEventListener("click", nextHand);
     $("btn-shuffle").addEventListener("click", shuffle);
     $("btn-reset").addEventListener("click", function () { clearTable(); scheduleAndRender(); });
@@ -775,6 +979,31 @@
         if (pl && pl.active !== a.active) { pl.active = a.active; changed = true; }
       });
     }
+    // Fixed-seat reading API: seats keep their identity; folding only flips the
+    // active flag, it never removes or renumbers a seat. Accepts the richer
+    // canonical shape { seatId, occupied, dealtIn, active, folded, allIn,
+    // stackBehind, streetCommitted, confidence }.
+    if (reading.seats && reading.seats.length) {
+      var maxSeat = 0;
+      reading.seats.forEach(function (s) { if (s.occupied !== false) maxSeat = Math.max(maxSeat, s.seatId); });
+      var wantN = Math.max(2, Math.min(10, maxSeat + 1));
+      if (wantN !== state.numPlayers) {
+        state.numPlayers = wantN; $("in-players").value = wantN; $("players-val").textContent = wantN;
+        ensurePlayers(); changed = true;
+      }
+      reading.seats.forEach(function (s) {
+        var pl = state.players[s.seatId];
+        if (!pl) return;
+        var active = s.active != null ? s.active : !s.folded;
+        if (pl.active !== active) { pl.active = active; changed = true; }
+        if (typeof s.stackBehind === "number" && pl.stack !== s.stackBehind) { pl.stack = s.stackBehind; changed = true; }
+        if (typeof s.streetCommitted === "number" && pl.bet !== s.streetCommitted) { pl.bet = s.streetCommitted; changed = true; }
+      });
+    }
+    if (typeof reading.buttonSeat === "number" && state.dealer !== reading.buttonSeat) {
+      state.dealer = reading.buttonSeat; changed = true;
+    }
+    if (typeof reading.potDisplayMode === "string") { state.potDisplayMode = reading.potDisplayMode; }
     // Opponents' bets from Watch, mapped to the non-hero seats in order. undefined
     // = that bet box isn't set (leave it); null = boxed but no bet -> 0.
     if (reading.bets) {

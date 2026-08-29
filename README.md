@@ -31,18 +31,26 @@ can host it for free on **GitHub Pages** and use it live at the table.
   five-card hand you can still finish with by the river — your ceiling and
   floor — found by enumerating every remaining board runout from the unseen
   deck (e.g. *Best: Royal Flush · Worst: Ace high*).
-- **Betting recommendation.** Combines your equity with the pot, the price to
-  call and your stack to recommend an action and a **bet size**, using **pot
-  odds**, **expected value (EV)** and the **Kelly criterion** (the bet fraction
-  that maximises long-run winnings). All the numbers are shown so you can check
-  the maths.
+- **Betting recommendation (Simple mode).** Combines your equity with the pot,
+  the price to call and your stack to recommend an action and a **bet size**,
+  using **pot odds** and **expected value (EV)**. All the numbers are shown so
+  you can check the maths.
+- **Range-aware EV strategy (Advanced mode, one deck).** Models each active
+  opponent as a **weighted range of exact two-card combinations** (all 1,326 of
+  them), computes your equity **against those ranges** with confidence
+  intervals, and compares the **expected value of every legal action and bet
+  size** — fold, call, and a ladder of bet/raise sizes — ranking them by EV with
+  fold equity and equity-when-called shown. Simple mode keeps working unchanged;
+  Advanced mode is opt-in and clearly separated.
 - **Fully customisable game.** Number of players (2–10) and number of decks
   (1–8). By default the deck is **reshuffled every hand** (a full, fresh deck
   each deal); turn that option off to track a multi-hand **shoe**, choosing how
   many hands are dealt before the shuffle — dealt cards then stay removed from
   the odds across the shoe.
 - **Built for speed.** The simulation runs in a Web Worker so the interface
-  never freezes; a full recalculation typically takes **under 100 ms**.
+  never freezes. Simple mode stays fast and light; Advanced range work is
+  heavier but stays off the main thread, with stale jobs ignored and
+  convergence-based stopping once the confidence interval is tight enough.
 - **First-class iPhone experience.** A dedicated mobile layout built to Apple
   HIG standards: safe-area (notch / home-indicator) aware, no zoom-on-focus,
   a thumb-reachable recommendation bar, an iOS-style bottom sheet for advice
@@ -194,31 +202,87 @@ Numbers are read with a decimal point, so **1.2M** is read as 1,200,000 (not
 not a trained model: it's accurate on a clean, well-traced box but can misread —
 glance at the live strip and one-click any card to fix and teach it. It reads
 **your cards, the board, the pot and your stack** (the numbers that drive the
-maths). Reading every opponent's stack and auto-detecting the dealer button by
-vision aren't done yet (set the D manually). It needs a desktop browser (iOS
-Safari can't screen-share) and it never acts for you — it only fills in what
-you'd otherwise type. Use it for play-money, practice, or hand-replay study, and
+maths). Seats are now **fixed**: when an opponent folds, that seat is marked
+inactive and sits out of the odds — the table is **not** collapsed or
+renumbered, so a six-seat hand with three players left stays a six-seat hand.
+Action inference (bet / call / raise / all-in / fold) is derived from **stable
+state changes** with a confidence level; a **check** cannot be told from
+inaction by chips alone, so it needs an explicit label or a one-tap
+confirmation, and **low-confidence readings are surfaced for confirmation
+instead of silently updating** anything (see
+[docs/opponent-model.md](docs/opponent-model.md) and
+`js/watch-inference.js`). It needs a desktop browser (iOS Safari can't
+screen-share) and it **never acts for you** — it only fills in what you'd
+otherwise type. Use it for play-money, practice, or hand-replay study, and
 follow the rules of any site you're on.
 
 ---
 
 ## 🧮 The maths (and why it's trustworthy)
 
-Let `p` be your equity — your probability of winning the pot, with ties counted
-as their fractional share (exactly what the simulator returns).
+Let `e` be your equity — your probability of winning the pot, with ties counted
+as their fractional share (exactly what the simulator returns). `P` is the
+**canonical pot before you add chips** (it includes opponents' current bets but
+excludes your pending call — see [pot semantics](docs/math-specification.md#1-pot-semantics-the-canonical-convention)),
+and `C` is your additional call cost.
 
 | Concept | Formula | Meaning |
 | --- | --- | --- |
-| **Pot odds (break-even equity)** | `toCall / (pot + toCall)` | the minimum `p` at which a call is not losing |
-| **EV of calling** | `p · pot − (1 − p) · toCall` | expected chips gained/lost by calling |
-| **Kelly stake** | `p − (1 − p)·toCall/pot` | fraction of your stack to commit for maximum long-run growth |
+| **Break-even equity** | `C / (P + C)` | the minimum `e` at which a call is not losing |
+| **EV of calling** | `e · (P + C) − C` | expected chips vs folding |
+| **Fold equity** | `F = P(villain folds)` | how often a bet takes it down uncontested |
+| **EV of a bet `B`** | `F·P + (1−F)·(eCalled·(P + 2B) − B)` | value of betting, folds + called |
+| **Effective stack** | `min(hero, opponent)` total chips | how deep the decision really is |
+| **SPR** | `stackBehind / P` | stack-to-pot ratio |
+
+Worked numbers (all in [`test/action-ev.test.js`](test/action-ev.test.js)):
+`P=100, C=50, e=1/3 → EV_call = 0`; `e=0.40 → EV_call = 10`;
+`P=100, B=50, F=0.5, eCalled=0.6 → EV_bet = 85`.
 
 The recommendation logic:
 
-- **Fold** when `p` is below the pot odds (a call is −EV).
-- **Call / Check** when calling is +EV but you are not a clear favourite.
-- **Raise / Bet** when you are a clear favourite, sizing toward the Kelly
-  fraction and capping at your stack.
+- **Simple mode:** fold below the break-even equity; call/check when +EV but not
+  a clear favourite; bet/raise for value when ahead.
+- **Advanced mode:** every legal action and candidate bet size is scored by
+  estimated EV and **ranked** — the top one is the recommendation, with the EV
+  gap to the next-best, fold equity, equity-when-called and a confidence level.
+
+### Why **not** Kelly for the bet size
+
+Classic Kelly assumes a fixed binary wager where changing the stake leaves the
+win probability and payoff odds unchanged. A poker bet breaks all of that: size
+changes fold equity, calling ranges, future streets and pot geometry. So Kelly
+is **not** used to choose the poker bet — bet sizes are compared by estimated EV
+instead. Kelly is retained only as an optional, clearly labelled **bankroll-risk
+statistic** (fractional Kelly), with the tournament stack kept distinct from a
+bankroll. See [the math spec](docs/math-specification.md#10-why-kelly-is-not-the-bet-size-optimiser).
+
+### Why this is **not** a GTO solver
+
+The opponent ranges and action likelihoods are transparent heuristics and
+Bayesian updates, not equilibrium-solver output, so nothing is labelled "GTO".
+The strategy is a **range/EV** and **showdown-equity** recommendation.
+
+### Random-opponent vs range-adjusted equity
+
+Simple mode's equity is versus **uniformly random** hands. Advanced mode's
+equity is versus the **modelled ranges** — a modelled range, not a read on the
+exact cards. Both are shown so you can see the difference. Advanced range
+modelling is **one-deck only**; with more than one deck the app falls back to
+uniform equity and says so.
+
+### Exact vs Monte Carlo, and confidence intervals
+
+When the number of unknown-card combinations is small the result is **exact
+enumeration** (the true probability). Otherwise a **Monte-Carlo** simulation is
+used and every range result carries a **95% confidence interval**, standard
+error, and accepted/rejected sample counts. Outputs are rounded to the precision
+the interval supports — the app never claims accuracy the CI does not justify.
+
+Full derivations: [docs/math-specification.md](docs/math-specification.md),
+[docs/game-state-schema.md](docs/game-state-schema.md),
+[docs/opponent-model.md](docs/opponent-model.md), and the pre-upgrade
+[audit](docs/advanced-math-audit.md).
 
 ### Verified against known probabilities
 
@@ -235,9 +299,18 @@ npm test
 PASS AA vs KK (AA equity ≈ 0.823)   got=0.8269
 PASS AKs vs QQ (QQ equity ≈ 0.535)  got=0.5376
 PASS AA vs one random hand (≈ 0.852) got=0.8511
-...
-18 passed, 0 failed
+... game-state, ranges, hand-features, opponent-model, range-equity,
+    action-EV and Watch-inference suites ...
+195 passed, 0 failed
 ```
+
+The suite (run by `test/run.js`) covers the exact evaluator and uniform equity,
+the canonical game-state (fixed seats, positions, action order, min-raise, the
+short-all-in reopen rule, side pots), the 1,326-combo ranges and notation
+parser, hand/board features, the opponent model (non-negative weights,
+normalisation, distinct raise/call ranges, beta-binomial shrinkage), range
+equity (determinism, collision-free sampling, exact/MC agreement, confidence
+intervals), the EV formulas, and pure Watch action-inference fixtures.
 
 The 7-card hand evaluator ranks hands with a provably-correct total ordering
 (category + ordered tie-breakers packed into one integer), and even handles the
@@ -252,13 +325,26 @@ index.html            Page shell and layout
 manifest.webmanifest  PWA manifest (Home-Screen install)
 css/styles.css        Poker-felt theme, desktop + iPhone layouts
 js/cards.js           Card encoding + remaining-deck construction
-js/evaluator.js     7-card hand evaluator (exact hand ranking)
-js/equity.js        Win/tie/equity engine (exact enumeration + Monte-Carlo)
-js/advice.js        Pot odds, EV and Kelly betting recommendation
-js/worker.js        Runs the simulation off the main thread
-js/app.js           UI, state and the poker-table view
-js/watch.js         Watch mode: live screen-capture card recognition
-test/engine.test.js Dependency-free correctness suite (npm test)
+js/evaluator.js       7-card hand evaluator (exact hand ranking)
+js/equity.js          Uniform win/tie/equity engine (exact + Monte-Carlo)
+js/advice.js          Simple-mode pot-odds / EV recommendation
+js/game-state.js      Canonical state: positions, action order, legal actions,
+                      min-raise/reopen, effective stack, SPR, side pots, validation
+js/action-tracker.js  Apply/undo chronological actions; commitments & bet-to
+js/ranges.js          1,326-combo weighted ranges, notation parser, blockers
+js/range-presets.js   Documented (non-GTO) prior range data
+js/hand-features.js   Exact made-hand / draw / board-texture features
+js/opponent-model.js  Beta-binomial stats + likelihood + Bayesian range update
+js/range-equity.js    Range-weighted equity (seeded RNG, exact/MC, CI)
+js/action-ev.js       Break-even, call/bet/raise EV, fold equity, side pots
+js/strategy.js        Structured Simple / Range-EV recommendation
+js/watch-inference.js Pure Watch action inference (fixed seats, no collapse)
+js/persistence.js     Versioned local opponent-profile storage
+js/worker.js          Runs equity + strategy off the main thread
+js/app.js             UI, state, Simple + Advanced modes, the poker-table view
+js/watch.js           Watch mode: live screen-capture card recognition
+test/run.js           Test runner (npm test) aggregating all suites below
+test/*.test.js        Focused correctness suites (dependency-free)
 ```
 
 The engine files attach to a shared `Poker` namespace and run **unchanged** in

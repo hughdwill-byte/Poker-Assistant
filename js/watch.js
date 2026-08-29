@@ -1228,10 +1228,17 @@
     var seatBoxed = false;
     for (var sk = 0; sk < seatCount; sk++) { if (regions[SEAT_KEYS[sk]] || regions[SEATCARD_KEYS[sk]]) { seatBoxed = true; break; } }
     if (seatBoxed) {
-      var activeOpp = 0;
+      // FIXED SEATS: a seat that was dealt in this hand keeps its place for the
+      // whole hand. Folding flips the seat to inactive (dropped from the odds)
+      // but never shrinks the table - the six-seat hand with three players left
+      // stays a six-seat hand. We therefore count seats that are DEALT IN
+      // (active now OR folded after being dealt) toward the table size, and
+      // emit a per-seat active flag so folded seats persist but sit out.
+      var occupiedOpp = 0;
+      var seatActive = []; // per opponent seat: true=active, false=folded, null=empty
       for (var si = 0; si < seatCount; si++) {
         var key = SEAT_KEYS[si], ck = SEATCARD_KEYS[si];
-        if (!regions[key] && !regions[ck]) { activeOpp++; continue; } // seat not boxed -> assume in
+        if (!regions[key] && !regions[ck]) { occupiedOpp++; seatActive.push(true); continue; } // not boxed -> assume in
         var spotImg = regions[key] ? regionImageData(regions[key]) : null;
         var cardsImg = regions[ck] ? regionImageData(regions[ck]) : null;
         var refImg = cardsImg || spotImg;                    // used for change detection
@@ -1247,13 +1254,32 @@
         var st = stab[key], val = "seat:" + state;
         if (st && st.val === val) st.count++; else stab[key] = st = { val: val, count: 1 };
         st.state = state; st.refSig = refSig;
-        var inHand = st.count >= 2 ? (state === "active") : true;   // assume active during warm-up
-        if (inHand) activeOpp++;
+        var settled = st.count >= 2;
+        var inHand = settled ? (state === "active") : true;   // assume active during warm-up
+        // Dealt in this hand = active now, or folded after having had cards.
+        var dealtInThisHand = state === "active" || (settled && state === "folded" && seatHadCards[key]);
+        if (dealtInThisHand) { occupiedOpp++; seatActive.push(inHand); }
+        else { seatActive.push(null); } // an empty (never-dealt) seat
       }
-      var n = Math.max(2, Math.min(MAX_PLAYERS, activeOpp + 1)); // + you
+      var n = Math.max(2, Math.min(MAX_PLAYERS, occupiedOpp + 1)); // dealt-in opponents + you
       var cst = stab.__seatcount, cval = "n:" + n;
       if (cst && cst.val === cval) cst.count++; else stab.__seatcount = cst = { val: cval, count: 1 };
-      if (cst.count >= 2) reading.numPlayers = n;
+      if (cst.count >= 2) {
+        reading.numPlayers = n;
+        // Map dealt-in opponent seats (in order) to the non-hero player indices,
+        // marking folded seats inactive so the seat stays put but sits out.
+        var heroIdx = (API.getInfo ? API.getInfo().heroIndex : 0);
+        var oppOrder = [];
+        for (var pi = 0; pi < n; pi++) if (pi !== heroIdx) oppOrder.push(pi);
+        var actives = [], oi2 = 0;
+        for (var s2 = 0; s2 < seatActive.length; s2++) {
+          if (seatActive[s2] === null) continue;              // skip never-dealt seats
+          var pidx = oppOrder[oi2++];
+          if (pidx == null) break;
+          actives.push({ index: pidx, active: seatActive[s2] });
+        }
+        if (actives.length) reading.actives = actives;
+      }
     }
     API.applyReading(reading);
     renderStrip();
