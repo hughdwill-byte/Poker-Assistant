@@ -42,6 +42,19 @@ can host it for free on **GitHub Pages** and use it live at the table.
   size** — fold, call, and a ladder of bet/raise sizes — ranking them by EV with
   fold equity and equity-when-called shown. Simple mode keeps working unchanged;
   Advanced mode is opt-in and clearly separated.
+- **GTO reference & range analytics (Advanced mode).** Shown *alongside* the EV
+  recommendation — never overriding it, always labelled — a suite of
+  equilibrium and range tools: **minimum-defense-frequency / α / value:bluff**
+  references for the size faced; **implied & reverse-implied odds** (`W_min`) for
+  a drawing hand; **range-vs-range** analysis of your whole range (range equity,
+  nutted share, your hand's in-range percentile, and range/nut advantage); a
+  **balanced bet plan** (which of your hands value-bet / bluff / check, at
+  frequencies, with **blocker-aware** bluff selection); an **equilibrium
+  defense verdict** (defend/fold vs a bet, reconciled with the EV line); a
+  **realized-equity estimate** (raw × a bounded position/SPR heuristic); and
+  **stake/population baseline priors** with recency-weighted opponent stats.
+  See [docs/math-specification.md](docs/math-specification.md) and the
+  [deferred-factor roadmap](docs/future-math-roadmap.md).
 - **Fully customisable game.** Number of players (2–10) and number of decks
   (1–8). By default the deck is **reshuffled every hand** (a full, fresh deck
   each deal); turn that option off to track a multi-hand **shoe**, choosing how
@@ -261,8 +274,14 @@ bankroll. See [the math spec](docs/math-specification.md#10-why-kelly-is-not-the
 ### Why this is **not** a GTO solver
 
 The opponent ranges and action likelihoods are transparent heuristics and
-Bayesian updates, not equilibrium-solver output, so nothing is labelled "GTO".
-The strategy is a **range/EV** and **showdown-equity** recommendation.
+Bayesian updates, not equilibrium-solver output. The **recommendation** is a
+**range/EV** and **showdown-equity** recommendation — never labelled "GTO". The
+Advanced mode does show a labelled **GTO reference** layer (MDF/α/value:bluff,
+a balanced bet plan, an equilibrium defend/fold verdict) computed from
+deterministic indifference maths — but it is shown *alongside* the EV
+recommendation for comparison and **never silently overrides it**. Everything a
+model estimates rather than derives exactly is marked as such, with its
+assumptions and (for simulations) a confidence interval.
 
 ### Random-opponent vs range-adjusted equity
 
@@ -311,8 +330,9 @@ PASS AA vs KK (AA equity ≈ 0.823)   got=0.8269
 PASS AKs vs QQ (QQ equity ≈ 0.535)  got=0.5376
 PASS AA vs one random hand (≈ 0.852) got=0.8511
 ... game-state, ranges, hand-features, opponent-model, range-equity,
-    action-EV and Watch-inference suites ...
-195 passed, 0 failed
+    action-EV, rake, equilibrium, implied-odds, range-vs-range,
+    bet-composition, GTO-defense, realization and Watch-inference suites ...
+382 passed, 0 failed
 ```
 
 The suite (run by `test/run.js`) covers the exact evaluator and uniform equity,
@@ -347,7 +367,15 @@ js/range-presets.js   Documented (non-GTO) prior range data
 js/hand-features.js   Exact made-hand / draw / board-texture features
 js/opponent-model.js  Beta-binomial stats + likelihood + Bayesian range update
 js/range-equity.js    Range-weighted equity (seeded RNG, exact/MC, CI)
-js/action-ev.js       Break-even, call/bet/raise EV, fold equity, side pots
+js/range-vs-range.js  Hero-range equity distributions + range/nut advantage
+js/action-ev.js       Break-even, call/bet/raise EV (+rake), fold equity, side pots
+js/draw-odds.js       Outs / set-mining probabilities, geometric size helper
+js/equilibrium.js     GTO reference: MDF, alpha, value:bluff, defense assessment
+js/bet-composition.js Polarised value/bluff/check plan, blocker-aware bluffs, mix
+js/gto-defense.js     Equilibrium defend/fold verdict, reconciled with EV
+js/equity-realization.js  Raw x bounded realization factor (heuristic reference)
+js/implied-odds.js    Implied / reverse-implied odds, W_min, draw branches
+js/tournament-icm.js  Disabled ICM interface (tournaments deferred)
 js/strategy.js        Structured Simple / Range-EV recommendation
 js/watch-inference.js Pure Watch action inference (fixed seats, no collapse)
 js/persistence.js     Versioned local opponent-profile storage
