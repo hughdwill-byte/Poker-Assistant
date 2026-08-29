@@ -451,6 +451,27 @@
     return order[Math.min(idx, order.length - 1)];
   }
 
+  // Context for the equity-realization heuristic (#1): street, position, SPR and
+  // whether the hero holds a draw / strong made hand. Initiative is unknown
+  // (we don't track a chronological action stream), so it stays neutral.
+  function heroRealizationCtx() {
+    var boardArr = state.board.filter(function (c) { return c !== null; });
+    var street = boardArr.length >= 5 ? "river" : boardArr.length === 4 ? "turn" : boardArr.length === 3 ? "flop" : "preflop";
+    var pos = positionOfSeat(state.heroIndex);
+    var inPosition = pos == null ? null : (pos === "BTN" || pos === "CO" || pos === "BTN/SB");
+    var pot = canonicalPotForAdvanced();
+    var hero = state.players[state.heroIndex];
+    var spr = pot > 0 && hero ? hero.stack / pot : 3;
+    var draw = false, madeStrong = false;
+    if (P.HandFeatures && boardArr.length >= 3) {
+      var f = P.HandFeatures.extract(knownCards(hero), boardArr);
+      draw = !!(f.flush && (f.flush.flushDraw || f.comboDraw)) || !!(f.straight && (f.straight.oesd || f.straight.gutshot || f.straight.doubleGutshot));
+      madeStrong = !!(f.made && f.made.category >= P.CATEGORY.TWO_PAIR);
+      if (madeStrong) draw = false; // a strong made hand isn't "a draw"
+    }
+    return { street: street, inPosition: inPosition, hasInitiative: null, spr: spr, draw: draw, madeStrong: madeStrong };
+  }
+
   function buildOpponentRange(seatIndex) {
     var Ranges = P.Ranges;
     var blockers = allUsedCards();
@@ -696,6 +717,17 @@
     if (r.modeledEquity != null) addStat(stats, "Modelled equity", pct(r.modeledEquity));
     if (r.equityCi) addStat(stats, "95% CI", pct(r.equityCi[0]) + "–" + pct(r.equityCi[1]));
     if (r.potOdds) addStat(stats, "Break-even", pct(r.potOdds));
+    // Realized-equity estimate (#1): heuristic, postflop only, shown beside raw
+    // equity. The EV recommendation continues to use RAW showdown equity.
+    var realizationNote = null;
+    if (P.EquityRealization && r.modeledEquity != null) {
+      var rctx = heroRealizationCtx();
+      if (rctx && rctx.street !== "preflop") {
+        var rz = P.EquityRealization.realizedEquity(r.modeledEquity, rctx);
+        addStat(stats, "Realized eq. (est.)", pct(rz.realized) + " (×" + rz.R.toFixed(2) + ")");
+        realizationNote = rz.assumptions[0];
+      }
+    }
 
     // EV table of the leading candidates. The last column shows the balanced
     // (GTO reference) bluff share of the betting range for BET candidates.
@@ -761,6 +793,7 @@
 
     var a = $("strat-assumptions"); a.innerHTML = "";
     (r.assumptions || []).forEach(function (s) { var li = document.createElement("li"); li.textContent = s; a.appendChild(li); });
+    if (realizationNote) { var rli = document.createElement("li"); rli.textContent = realizationNote; a.appendChild(rli); }
 
     var warn = $("strat-warnings");
     warn.innerHTML = "";

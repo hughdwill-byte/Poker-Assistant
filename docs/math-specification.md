@@ -369,3 +369,26 @@ remains the primary recommendation (the equilibrium verdict never silently
 overrides it). Replacing the model's fold estimate with MDF wholesale, and a
 confidence-weighted blend, are deferred
 (see [future-math-roadmap.md](future-math-roadmap.md) #5).
+
+## 20. Equity realization (Phase C, Wave 1.6)
+
+Raw showdown equity assumes the hand always reaches showdown. A hand realises
+less of it out of position, without initiative, or when it can be bet off.
+`js/equity-realization.js` returns a bounded realization factor and estimate:
+
+```
+realized ≈ raw × R,   R = 1 + streetScale · sprFactor · (posEff + initEff + drawEff)
+```
+
+with R clamped to [0.80, 1.15]. On the **river** R = 1 exactly (equity is
+realised at showdown). Effects are monotonic: in position raises R, out of
+position lowers it; initiative raises it; deeper SPR and earlier streets widen
+the deviation; a draw (especially OOP) lowers it. Unknown position/initiative
+are neutral.
+
+This is a documented **heuristic**, explicitly not solver-validated — the spec
+warns against a "magic multiplier", so R is bounded, transparent, and shown only
+as a reference ("Realized eq. (est.)") beside the raw equity. The EV
+recommendation continues to use **raw** showdown equity. A calibrated R and a
+multi-street tree to validate against are deferred (see
+[future-math-roadmap.md](future-math-roadmap.md) #1, #8).

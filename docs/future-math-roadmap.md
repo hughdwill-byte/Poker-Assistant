@@ -14,14 +14,16 @@ throws until enabled). Neither feeds a recommendation.
 ---
 
 ### 1. Equity realization factor (R)
-- **Why:** raw showdown equity overstates EV out of position, without
-  initiative, or with hands that cannot continue on many runouts.
-- **Hook:** wrap `strategy.rangeRecommend`'s `e` in a realization factor
-  `R(position, initiative, playability, SPR)` before EV, or (preferred) replace
-  the one-decision approximation with a multi-street tree (#8).
-- **Needs first:** a calibrated `R` from solved or large-sample data, per
-  position/street/texture; validation against a multi-street tree so `R` is a
-  fast approximation of something real, not a fudge factor.
+- **Status:** **shipped as a labelled heuristic reference (Phase C, Wave 1.6).**
+  `js/equity-realization.js factor()` returns a bounded R ∈ [0.80, 1.15] from
+  street, position, initiative (unknown → neutral), SPR and draw/made status,
+  with R = 1 on the river (equity realised at showdown) and every effect
+  monotonic. The strategy card shows "Realized eq. (est.) = raw × R" beside the
+  raw modelled equity. It is **not** wired into the EV — the recommendation
+  still uses raw showdown equity — and is clearly marked "not solver-validated".
+- **Remaining:** a calibrated R (from solver/large-sample data) and validation
+  against a multi-street tree (#8) before it could responsibly *drive* EV;
+  today it is a fast, transparent, bounded approximation shown for context.
 
 ### 2. Implied and reverse-implied odds
 - **Status:** **shipped (Phase C, Wave 0.2)** as `js/implied-odds.js` — the

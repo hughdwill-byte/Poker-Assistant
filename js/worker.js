@@ -15,7 +15,7 @@ importScripts(
   "cards.js", "evaluator.js", "equity.js", "advice.js",
   "game-state.js", "action-tracker.js", "ranges.js", "range-presets.js",
   "hand-features.js", "opponent-model.js", "range-equity.js", "range-vs-range.js",
-  "action-ev.js", "draw-odds.js", "equilibrium.js", "bet-composition.js", "gto-defense.js", "implied-odds.js", "strategy.js"
+  "action-ev.js", "draw-odds.js", "equilibrium.js", "bet-composition.js", "gto-defense.js", "equity-realization.js", "implied-odds.js", "strategy.js"
 );
 
 self.onmessage = function (e) {
