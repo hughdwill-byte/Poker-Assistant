@@ -13,6 +13,7 @@ var suites = [
   "./hand-features.test",
   "./opponent-model.test",
   "./range-equity.test",
+  "./range-vs-range.test",
   "./action-ev.test",
   "./rake-and-refs.test",
   "./equilibrium.test",

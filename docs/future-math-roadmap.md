@@ -39,12 +39,16 @@ throws until enabled). Neither feeds a recommendation.
   future-win estimate to the user rather than inventing a multiplier.
 
 ### 3. Range-vs-range equity distributions & buckets
-- **Why:** point equity (hero-vs-range) hides variance; two hands with equal
-  average equity can play very differently.
-- **Hook:** extend `range-equity.js` to return an equity histogram over the
-  hero's range vs the opponent's range, plus bucket boundaries.
-- **Needs first:** a hero-range model (currently only the opponent is a range)
-  and a performance budget — full range-vs-range is O(combos²·runouts).
+- **Status:** **engine shipped (Phase C, Wave 1.1)** as `js/range-vs-range.js`.
+  `equityDistribution()` computes every hero-range combo's equity vs the
+  opponent range(s) and the board runout (reusing `simulateRanges`), returning
+  mean equity, nut/weak fractions, an equity histogram, per-combo equities, and
+  — given the hero's real hand — its percentile within its own range. A
+  `maxCombos` guard caps the O(combos) cost and reports truncation.
+- **Remaining:** wire a hero-range source into the Advanced UI and render the
+  distribution / percentile; the UI wiring is the next Wave-1 step. Full
+  range-vs-range (both sides, every runout) stays budget-bounded via `maxCombos`
+  and per-combo trials.
 
 ### 4. Range advantage & nut advantage metrics
 - **Why:** who can bet big on a given board depends on which range holds more

@@ -17,6 +17,7 @@ require("../js/range-presets.js");
 require("../js/hand-features.js");
 require("../js/opponent-model.js");
 require("../js/range-equity.js");
+require("../js/range-vs-range.js");
 require("../js/action-ev.js");
 require("../js/draw-odds.js");
 require("../js/equilibrium.js");
