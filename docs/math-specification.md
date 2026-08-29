@@ -308,3 +308,27 @@ in-range percentile, and heads-up range/nut advantage). This is an **analysis
 layer** — it explains the spot; it does not change the EV recommendation. It is
 the hero-range foundation for polarised bet-sizing and blocker-based bluff
 selection (see [future-math-roadmap.md](future-math-roadmap.md) #7, #15).
+
+## 18. Polarised bet composition (Phase C, Wave 1.2)
+
+`js/bet-composition.js` turns the hero-range distribution (§17) into an
+actionable, balanced betting plan. Given the hero range as combos with their
+equity vs the opponent range, and a bet `B` into pot `P`, `plan()` partitions it:
+
+- **Value** = combos with equity ≥ `valueThreshold` (default 0.55, ahead of a
+  calling range);
+- **Bluff** = the lowest-equity air (equity ≤ 0.35) chosen up to the balanced
+  count, `bluffWeight = valueWeight · B/(P+B)` — the value:bluff = `(P+B):B`
+  ratio from §8.4 / equilibrium.js;
+- **Check** = the medium combos (bluff-catchers / thin showdown value).
+
+It reports the target vs actual bluff fraction of the betting range
+(`B/(P+2B)` when air is sufficient), a `bluffShortfall` when the range is too
+value-heavy to balance, and — given the hero's actual hand — its **role**
+(VALUE / BLUFF / CHECK). The Range-vs-range card shows that role at ½ / ¾ / pot.
+
+Composition is a cheap sort-and-partition (no simulation) run on the
+range-vs-range results. It is a **GTO-approximation plan shown alongside** the
+EV table, not the primary recommendation. Blocker-aware bluff selection and
+conditioning value on the per-size calling range are deferred (see
+[future-math-roadmap.md](future-math-roadmap.md) #15).

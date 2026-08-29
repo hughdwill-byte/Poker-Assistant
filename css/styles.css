@@ -705,3 +705,11 @@ body {
 .gto-row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
 .gto-row b { color: var(--accent); }
 .gto-note { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+
+/* ---- Range-vs-range bet plan (Phase C, Wave 1.2) ---- */
+.rvr-plan { margin-top: 8px; border-top: 1px solid var(--panel-2); padding-top: 8px; }
+.rvr-plan .gto-row { align-items: baseline; gap: 8px; }
+.rvr-plan .role-value { color: var(--good); }
+.rvr-plan .role-bluff { color: var(--accent); }
+.rvr-plan .role-check { color: var(--muted); }
+.rvr-plan .plan-bluff { color: var(--muted); font-size: 11px; margin-left: auto; }

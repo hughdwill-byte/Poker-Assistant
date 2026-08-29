@@ -521,15 +521,23 @@
     };
     $("strat-headline").textContent = "Calculating range EV…";
     runStrategy(dc);
-    computeRvr(opponents, hero, dc.board, dc.deadCards);
+    computeRvr(opponents, hero, dc.board, dc.deadCards, P0);
   }
+
+  var rvrPot = 0; // canonical pot captured for the range-vs-range bet-composition plan
 
   // Range-vs-range analysis (Wave 1.1): how the hero's whole range performs on
   // this board, where the hero's actual hand ranks within it, and (heads-up)
   // the range/nut advantage. Analysis only - it never changes the EV advice.
   function buildHeroRange() {
     var Ranges = P.Ranges;
+    // The hero's own cards belong IN the hero range, so they must not block it.
+    // Block only the board, dead cards and any other players' known cards.
     var blockers = allUsedCards();
+    knownCards(state.players[state.heroIndex]).forEach(function (hc) {
+      var i = blockers.indexOf(hc);
+      if (i >= 0) blockers.splice(i, 1);
+    });
     var base, source;
     if (state.heroRangeSource === "manual") {
       var parsed = Ranges.parse(state.heroRangeText || "");
@@ -547,7 +555,8 @@
     return { range: Ranges.normalise(Ranges.removeBlockers(base, blockers)), source: source };
   }
 
-  function computeRvr(opponents, hero, board, dead) {
+  function computeRvr(opponents, hero, board, dead, pot) {
+    rvrPot = pot || 0;
     var card = $("rvr-card");
     if (!card) return;
     if (state.heroRangeSource === "none") { card.hidden = true; return; }
@@ -592,10 +601,35 @@
       addStat(stats, "Range edge", (a.equityEdge >= 0 ? "+" : "") + (a.equityEdge * 100).toFixed(1) + "%");
       addStat(stats, "Nut advantage", (a.nutAdvantage >= 0 ? "+" : "") + (a.nutAdvantage * 100).toFixed(1) + "%");
     }
+    // Polarised bet-composition plan (#7): where the hero's hand plays at a few
+    // reference sizes, and the balanced value/bluff split of the whole range.
+    var heroCards = knownCards(state.players[state.heroIndex]);
+    if (P.BetComposition && rvrPot > 0 && h.combos && h.combos.length) {
+      var sizes = [{ label: "½ pot", B: 0.5 * rvrPot }, { label: "¾ pot", B: 0.75 * rvrPot }, { label: "pot", B: rvrPot }];
+      var lines = sizes.map(function (s) {
+        var pl = P.BetComposition.plan({ combos: h.combos, P: rvrPot, B: s.B, heroActual: heroCards });
+        if (!pl.ok) return null;
+        var roleTxt = pl.heroRole ? pl.heroRole.toUpperCase() : "—";
+        var bluffPct = (pl.actualBluffFractionOfBets * 100).toFixed(0);
+        var shortfall = pl.bluffShortfall > 1e-6 ? " (range short of bluffs)" : "";
+        return { label: s.label, role: roleTxt, bluffPct: bluffPct, shortfall: shortfall };
+      }).filter(Boolean);
+      if (lines.length) {
+        var wrap = document.createElement("div");
+        wrap.className = "rvr-plan";
+        wrap.innerHTML = '<div class="gto-title">Balanced bet plan — your hand plays as</div>' +
+          lines.map(function (l) {
+            return '<div class="gto-row"><span>' + l.label + '</span><b class="role-' + l.role.toLowerCase() + '">' + l.role + "</b>" +
+              '<span class="plan-bluff">' + l.bluffPct + "% bluffs" + l.shortfall + "</span></div>";
+          }).join("");
+        $("rvr-stats").appendChild(wrap);
+      }
+    }
+
     var note = [];
     if (h.truncated) note.push("Range sampled (" + h.combosEvaluated + " combos) for speed.");
     note.push(res.advantage ? "Heads-up range/nut advantage on this board." : "Multiway: showing your range only (no pairwise advantage).");
-    note.push("Analysis only — this does not change the EV recommendation.");
+    note.push("Balanced-range plan is a GTO approximation shown for comparison; the EV table is the recommendation.");
     $("rvr-note").textContent = note.join(" ");
   }
 

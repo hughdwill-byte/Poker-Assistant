@@ -21,6 +21,7 @@ require("../js/range-vs-range.js");
 require("../js/action-ev.js");
 require("../js/draw-odds.js");
 require("../js/equilibrium.js");
+require("../js/bet-composition.js");
 require("../js/implied-odds.js");
 require("../js/tournament-icm.js");
 require("../js/strategy.js");

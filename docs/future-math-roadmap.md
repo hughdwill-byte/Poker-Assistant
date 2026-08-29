@@ -85,11 +85,18 @@ throws until enabled). Neither feeds a recommendation.
   it, invented mixes are worse than an honest single best-EV action.
 
 ### 7. Polarisation & optimal bluff-to-value ratios
-- **Why:** by-size value:bluff ratios `(P+B):B` govern balanced betting.
-- **Hook:** `opponent-model.js` already polarises heuristically; a real version
-  would set bluff frequency from size and range composition (#4).
-- **Needs first:** range advantage (#4) and a commitment to a
-  GTO-approximation objective for that branch.
+- **Status:** **shipped (Phase C, Wave 1.2)** as `js/bet-composition.js`.
+  `plan()` partitions the hero range into value / bluff / check for a bet size
+  so the betting range is balanced at value:bluff `(P+B):B` — value = strongest
+  combos, bluffs = the lowest-equity air up to the balanced count, mediums
+  check. It reports the target vs actual bluff fraction, a `bluffShortfall` when
+  the range lacks air, and the hero hand's role. The Range-vs-range card shows
+  the hero hand's role (VALUE / BLUFF / CHECK) at ½ / ¾ / pot sizes. It reuses
+  the equilibrium ratios (equilibrium.js) and the hero-range distribution (#3).
+- **Remaining:** blocker-aware bluff selection among the air candidates (#15),
+  and conditioning value on the opponent's *calling* range per size rather than
+  the full range. Presented alongside the EV table (a GTO-approximation plan),
+  not as the primary recommendation.
 
 ### 8. Full multi-street recursive game-tree EV (CFR-style)
 - **Why:** replaces the one-decision approximation and the omitted re-raise
