@@ -34,6 +34,57 @@
     foldToCbet: { a: 5, b: 5 },
   };
 
+  // Stake/population-indexed priors (Wave 0.3). A zero-data opponent is assumed
+  // to play like the typical member of the named population, so the baseline the
+  // Bayesian update shrinks toward reflects the pool. Kept as documented data,
+  // not solver output. "default" mirrors STAT_PRIORS (~25/17/6, 6-max mid).
+  var POPULATION_PRIORS = {
+    "default": STAT_PRIORS,
+    // Micro stakes: loose-passive - wide VPIP, low PFR, rarely 3-bets, folds to c-bets a lot.
+    "micro": {
+      vpip: { a: 12, b: 16 },      // ~43%
+      pfr: { a: 4, b: 24 },        // ~14%
+      threeBet: { a: 1, b: 24 },   // ~4%
+      foldToThreeBet: { a: 7, b: 3 }, // ~70%
+      cbet: { a: 6, b: 5 },        // ~55%
+      foldToCbet: { a: 6, b: 4 },  // ~60%
+    },
+    // Low stakes: still loose but a bit more aggression.
+    "low": {
+      vpip: { a: 9, b: 15 },       // ~37%
+      pfr: { a: 5, b: 20 },        // ~20%
+      threeBet: { a: 1, b: 18 },   // ~5%
+      foldToThreeBet: { a: 6, b: 4 },
+      cbet: { a: 6, b: 4 },
+      foldToCbet: { a: 5, b: 5 },
+    },
+    // Mid stakes: the balanced 6-max default.
+    "mid": STAT_PRIORS,
+    // High stakes / regs: tighter and more aggressive, 3-bets more, folds less.
+    "high": {
+      vpip: { a: 5, b: 19 },       // ~21%
+      pfr: { a: 4, b: 17 },        // ~19%
+      threeBet: { a: 2, b: 18 },   // ~10%
+      foldToThreeBet: { a: 4, b: 6 }, // ~40%
+      cbet: { a: 6, b: 5 },
+      foldToCbet: { a: 4, b: 6 },
+    },
+    // Live low-stakes: very loose-passive.
+    "live": {
+      vpip: { a: 15, b: 15 },      // ~50%
+      pfr: { a: 3, b: 24 },        // ~11%
+      threeBet: { a: 1, b: 30 },   // ~3%
+      foldToThreeBet: { a: 7, b: 3 },
+      cbet: { a: 5, b: 5 },
+      foldToCbet: { a: 6, b: 4 },
+    },
+  };
+
+  /** Select a population's prior set, falling back to the default. */
+  function priorsFor(population) {
+    return (population && POPULATION_PRIORS[population]) || STAT_PRIORS;
+  }
+
   function newCounter() { return { opp: 0, hits: 0 }; }
 
   function createProfile(opts) {
@@ -64,14 +115,51 @@
     return (counter.hits + prior.a) / (counter.opp + prior.a + prior.b);
   }
 
-  function stats(profile) {
+  /**
+   * Recency-weighted beta-binomial rate (Wave 0.3). Each timestamped event is
+   * weighted by 2^(-age/halfLife), so old reads fade and recent behaviour
+   * dominates. Falls back to the plain count-based `rate` when the counter has
+   * no timestamped events or no half-life is given, so nothing breaks for
+   * profiles recorded without timestamps.
+   */
+  function decayedRate(counter, prior, halfLifeMs, now) {
+    prior = prior || { a: 1, b: 1 };
+    if (!halfLifeMs || !counter.events || !counter.events.length) {
+      return rate(counter, prior);
+    }
+    var lambda = Math.LN2 / halfLifeMs;
+    var wOpp = 0, wHit = 0;
+    for (var i = 0; i < counter.events.length; i++) {
+      var e = counter.events[i];
+      var age = Math.max(0, now - e.t);
+      var w = Math.exp(-lambda * age);
+      wOpp += w; wHit += w * e.h;
+    }
+    return (wHit + prior.a) / (wOpp + prior.a + prior.b);
+  }
+
+  /**
+   * Derived statistics with shrinkage.
+   * @param {Object} profile
+   * @param {Object} [opts] { population, halfLifeMs, now }
+   *   population : key into POPULATION_PRIORS (baseline the update shrinks toward)
+   *   halfLifeMs : if set with `now`, rates are recency-weighted (decayed)
+   */
+  function stats(profile, opts) {
+    opts = opts || {};
+    var priors = priorsFor(opts.population);
+    var useDecay = opts.halfLifeMs && opts.now != null;
+    var rt = function (counter, key) {
+      return useDecay ? decayedRate(counter, priors[key], opts.halfLifeMs, opts.now) : rate(counter, priors[key]);
+    };
     return {
       hands: profile.hands,
-      vpip: rate(profile.vpip, STAT_PRIORS.vpip),
-      pfr: rate(profile.pfr, STAT_PRIORS.pfr),
-      threeBet: rate(profile.threeBet, STAT_PRIORS.threeBet),
-      foldToThreeBet: rate(profile.foldToThreeBet, STAT_PRIORS.foldToThreeBet),
-      cbetFlop: rate(profile.cbet.flop, STAT_PRIORS.cbet),
+      population: opts.population || "default",
+      vpip: rt(profile.vpip, "vpip"),
+      pfr: rt(profile.pfr, "pfr"),
+      threeBet: rt(profile.threeBet, "threeBet"),
+      foldToThreeBet: rt(profile.foldToThreeBet, "foldToThreeBet"),
+      cbetFlop: rt(profile.cbet.flop, "cbet"),
       aggressionFactor: profile.aggression.calls > 0
         ? (profile.aggression.bets + profile.aggression.raises) / profile.aggression.calls
         : (profile.aggression.bets + profile.aggression.raises),
@@ -79,8 +167,17 @@
     };
   }
 
-  // Record one opportunity/result for a counter.
-  function observe(counter, hit) { counter.opp++; if (hit) counter.hits++; }
+  // Record one opportunity/result for a counter. An optional timestamp `t`
+  // additionally logs a decayable event so stats() can recency-weight; without
+  // it the counter still tallies plain counts (backward compatible).
+  function observe(counter, hit, t) {
+    counter.opp++; if (hit) counter.hits++;
+    if (t != null) {
+      counter.events = counter.events || [];
+      counter.events.push({ h: hit ? 1 : 0, t: t });
+      if (counter.events.length > 500) counter.events.shift();
+    }
+  }
 
   // ---- Combo strength ------------------------------------------------------
 
@@ -253,9 +350,12 @@
   Poker.OpponentModel = {
     PROFILE_SCHEMA: PROFILE_SCHEMA,
     STAT_PRIORS: STAT_PRIORS,
+    POPULATION_PRIORS: POPULATION_PRIORS,
+    priorsFor: priorsFor,
     createProfile: createProfile,
     stats: stats,
     rate: rate,
+    decayedRate: decayedRate,
     observe: observe,
     recordAction: recordAction,
     comboStrength: comboStrength,

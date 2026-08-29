@@ -63,10 +63,28 @@
     return { range: parsed.range, source: source };
   }
 
+  // Baseline opponent style per stake/population (Wave 0.3). Seeds a zero-data
+  // profile's style so its opening/continuing range prior starts from the
+  // pool's tendency (widened/tightened via PROFILE_ADJUST). Documented data,
+  // not solver output.
+  var POPULATION_STYLES = {
+    "default": "unknown",
+    "micro": "calling_station",
+    "low": "loose",
+    "mid": "unknown",
+    "high": "tight",
+    "live": "calling_station",
+  };
+  function styleForPopulation(population) {
+    return POPULATION_STYLES[population] || "unknown";
+  }
+
   Poker.RangePresets = {
     RFI: RFI,
     THREE_BET: THREE_BET,
     PROFILE_ADJUST: PROFILE_ADJUST,
+    POPULATION_STYLES: POPULATION_STYLES,
+    styleForPopulation: styleForPopulation,
     priorFor: priorFor,
     listPositions: function () { return Object.keys(RFI); },
   };

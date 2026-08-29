@@ -259,3 +259,25 @@ cost isn't fixed, so the two-card figure is not used), and `W_min`. It assumes
 win the caller must find. This is reference-only; it does not change the EV
 recommendation. Out discounting and a per-opponent future-bet model are deferred
 (see [future-math-roadmap.md](future-math-roadmap.md) #2).
+
+## 16. Baseline priors & recency weighting (Phase C, Wave 0.3)
+
+Opponent statistics use beta-binomial shrinkage (spec §12.4): a rate is
+`(hits + α) / (opps + α + β)`. Two Wave-0.3 refinements:
+
+- **Stake/population priors** (`OpponentModel.POPULATION_PRIORS`): the `(α, β)`
+  baseline a zero-data opponent shrinks toward is chosen by pool — default,
+  micro (loose-passive, ~43% VPIP), low, mid, high (tight-aggressive, ~21% VPIP,
+  more 3-bets), live (very loose). `stats(profile, {population})` selects the
+  set; an unknown key falls back to the default.
+- **Recency weighting** (`observe(counter, hit, t)` + `decayedRate`): each
+  timestamped event is weighted `2^(-age / halfLife)`, so old reads fade and
+  recent behaviour dominates; `stats(profile, {halfLifeMs, now})` returns
+  decayed rates. With no timestamps it falls back to plain counts, so existing
+  profiles keep working unchanged.
+
+The Advanced UI has an opponent-pool selector and shows the assumed pool
+baseline (VPIP/PFR/3-bet) as a **reference**. These priors seed the model but do
+not by themselves change the EV until live per-opponent profiles are attached to
+the strategy call (deferred; see [future-math-roadmap.md](future-math-roadmap.md)
+#14).

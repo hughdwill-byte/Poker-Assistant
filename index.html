@@ -128,6 +128,17 @@
             <div class="field"><label for="in-rakecap">Rake cap (0 = none)</label><input id="in-rakecap" type="number" inputmode="numeric" min="0" step="1" value="0" /></div>
           </div>
           <div class="field">
+            <label for="in-population">Opponent pool (baseline priors)</label>
+            <select id="in-population">
+              <option value="default" selected>Default (6-max, ~25/17)</option>
+              <option value="micro">Micro stakes (loose-passive)</option>
+              <option value="low">Low stakes</option>
+              <option value="mid">Mid stakes</option>
+              <option value="high">High stakes / regs (tight-aggressive)</option>
+              <option value="live">Live low-stakes (very loose)</option>
+            </select>
+          </div>
+          <div class="field">
             <label for="in-range-source">Opponent range (applied to active opponents)</label>
             <select id="in-range-source">
               <option value="uniform" selected>Uniform — any two cards (versus random)</option>

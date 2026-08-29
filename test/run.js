@@ -17,6 +17,7 @@ var suites = [
   "./rake-and-refs.test",
   "./equilibrium.test",
   "./implied-odds.test",
+  "./priors-recency.test",
   "./watch-inference.test",
 ];
 

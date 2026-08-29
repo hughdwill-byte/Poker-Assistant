@@ -135,12 +135,19 @@ throws until enabled). Neither feeds a recommendation.
   with metadata; must be labelled by structure/antes, not frozen universally.
 
 ### 14. Time-decay / recency weighting + stakes/population priors
-- **Why:** opponents change; old reads should fade; priors should depend on
-  stake and population.
-- **Hook:** `opponent-model.js recordAction`/`stats` — weight observations by
-  recency and start from stake-specific Beta priors.
-- **Needs first:** timestamps on observations (already stored) and a validated
-  decay constant + population prior set; avoid overfitting tiny samples.
+- **Status:** **shipped (Phase C, Wave 0.3).** `opponent-model.js` now carries
+  stake/population-indexed Beta priors (`POPULATION_PRIORS`: default / micro /
+  low / mid / high / live) selected via `stats(profile, {population})`, and
+  recency weighting via `observe(counter, hit, t)` + `decayedRate` /
+  `stats(profile, {halfLifeMs, now})` (each event weighted `2^(-age/halfLife)`,
+  falling back to plain counts when no timestamps exist). `range-presets.js`
+  maps each population to a baseline style. The Advanced UI has an opponent-pool
+  selector and shows the assumed pool baseline (VPIP/PFR/3-bet) as a reference.
+- **Remaining:** a validated decay constant per context, and wiring live
+  per-opponent profiles into the strategy call so these priors and decayed reads
+  actually shift the modelled ranges (arrives with the persistence/profile
+  attachment in Wave 1). Today the baseline is surfaced as a reference and seeds
+  `stats()`, but the strategy's opponents are still preset/uniform ranges.
 
 ### 15. Blocker-driven strategic bluff/value selection
 - **Why:** hero's own blockers should bias which hands bluff or value-bet.

@@ -35,6 +35,7 @@
     rakeCap: 0,               // 0 = uncapped
     rangeSource: "uniform",
     manualRange: "QQ+, AK, AQs, AJs, KQs",
+    population: "default",     // opponent-pool baseline priors (Wave 0.3)
   };
 
   function defaultName(i) { return "Player " + (i + 1); }
@@ -500,6 +501,7 @@
       mode: state.gameMode,
       rakePercent: state.rakePercent,
       rakeCap: state.rakeCap,
+      population: state.population,
     };
     $("strat-headline").textContent = "Calculating range EV…";
     runStrategy(dc);
@@ -588,6 +590,17 @@
       n.className = "gto-note";
       n.textContent = io.note;
       gto.appendChild(n);
+    }
+
+    // Opponent-pool baseline (assumed priors for a zero-data opponent).
+    var pb = r.populationBaseline;
+    if (pb && pb.population && pb.population !== "default") {
+      var prow = document.createElement("div");
+      prow.className = "gto-row pop-row";
+      prow.innerHTML = "<span>Pool baseline (" + pb.population + ")</span><b>VPIP " +
+        (pb.vpip * 100).toFixed(0) + "% · PFR " + (pb.pfr * 100).toFixed(0) + "% · 3bet " + (pb.threeBet * 100).toFixed(0) + "%</b>";
+      gto.hidden = false;
+      gto.appendChild(prow);
     }
 
     var a = $("strat-assumptions"); a.innerHTML = "";
@@ -927,6 +940,7 @@
     });
     $("in-rakepct").addEventListener("input", function () { state.rakePercent = Math.max(0, (parseFloat(this.value || "0") || 0) / 100); scheduleAdvanced(); });
     $("in-rakecap").addEventListener("input", function () { state.rakeCap = Math.max(0, parseInt(this.value || "0", 10) || 0); scheduleAdvanced(); });
+    $("in-population").addEventListener("change", function () { state.population = this.value; scheduleAdvanced(); });
     $("in-range-source").addEventListener("change", function () {
       state.rangeSource = this.value;
       $("manual-range-field").hidden = this.value !== "manual";

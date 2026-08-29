@@ -196,8 +196,19 @@
       explanation: explanation,
       equilibrium: equilibrium,
       impliedOdds: impliedOdds,
+      populationBaseline: populationBaseline(dc),
       equityDetail: eqRes,
     };
+  }
+
+  // The assumed zero-data baseline for the selected opponent pool (Wave 0.3).
+  // Reference-only: it is the prior the opponent model shrinks toward, shown so
+  // the assumed pool tendency is visible. It does not by itself change the EV.
+  function populationBaseline(dc) {
+    var OM = Poker.OpponentModel;
+    if (!OM || !dc.population) return null;
+    var s = OM.stats(OM.createProfile(), { population: dc.population });
+    return { population: dc.population, vpip: s.vpip, pfr: s.pfr, threeBet: s.threeBet };
   }
 
   // Generate legal bet-to targets from pot fractions, capped by the stack, and
