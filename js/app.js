@@ -36,6 +36,8 @@
     rangeSource: "uniform",
     manualRange: "QQ+, AK, AQs, AJs, KQs",
     population: "default",     // opponent-pool baseline priors (Wave 0.3)
+    heroRangeSource: "none",   // range-vs-range analysis (Wave 1.1)
+    heroRangeText: "QQ+, AK, AQs, KQs, JTs",
   };
 
   function defaultName(i) { return "Player " + (i + 1); }
@@ -59,13 +61,14 @@
   // ---------- Worker ----------
   // Job ids are tracked per channel so a strategy job never clobbers the uniform
   // equity job (and each channel ignores its own stale results).
-  var worker = null, jobId = 0, pendingId = 0, pendingStrategyId = 0;
+  var worker = null, jobId = 0, pendingId = 0, pendingStrategyId = 0, pendingRvrId = 0;
   try {
     worker = new Worker("js/worker.js");
     worker.onmessage = function (e) {
       var d = e.data || {};
       if (d.id === pendingId) applyResults(d.result);
       else if (d.id === pendingStrategyId) applyStrategy(d.result);
+      else if (d.id === pendingRvrId) applyRvr(d.result);
     };
     worker.onerror = function () { worker = null; };
   } catch (err) { worker = null; }
@@ -92,6 +95,19 @@
       setTimeout(function () {
         var res = P.Strategy.rangeRecommend(cfg);
         if (myId === pendingStrategyId) applyStrategy(res);
+      }, 0);
+    }
+  }
+
+  function runRvr(cfg) {
+    pendingRvrId = ++jobId;
+    if (worker) {
+      worker.postMessage({ id: pendingRvrId, type: "rvr", cfg: cfg });
+    } else {
+      var myId = pendingRvrId;
+      setTimeout(function () {
+        var res = P.RangeVsRange.analyze(cfg);
+        if (myId === pendingRvrId) applyRvr(res);
       }, 0);
     }
   }
@@ -505,6 +521,82 @@
     };
     $("strat-headline").textContent = "Calculating range EV…";
     runStrategy(dc);
+    computeRvr(opponents, hero, dc.board, dc.deadCards);
+  }
+
+  // Range-vs-range analysis (Wave 1.1): how the hero's whole range performs on
+  // this board, where the hero's actual hand ranks within it, and (heads-up)
+  // the range/nut advantage. Analysis only - it never changes the EV advice.
+  function buildHeroRange() {
+    var Ranges = P.Ranges;
+    var blockers = allUsedCards();
+    var base, source;
+    if (state.heroRangeSource === "manual") {
+      var parsed = Ranges.parse(state.heroRangeText || "");
+      if (!parsed.ok || !parsed.range.length) return { range: [], source: "invalid: " + (parsed.error || "empty") };
+      base = parsed.range; source = "manual";
+    } else if (state.heroRangeSource === "position") {
+      var pos = positionOfSeat(state.heroIndex);
+      var prior = P.RangePresets.priorFor({ position: pos });
+      base = prior.range; source = prior.source;
+    } else {
+      base = Ranges.fullRange(); source = "uniform";
+    }
+    // Keep the hero's ACTUAL hand in the range so it can be located, but remove
+    // board/dead blockers.
+    return { range: Ranges.normalise(Ranges.removeBlockers(base, blockers)), source: source };
+  }
+
+  function computeRvr(opponents, hero, board, dead) {
+    var card = $("rvr-card");
+    if (!card) return;
+    if (state.heroRangeSource === "none") { card.hidden = true; return; }
+    var built = buildHeroRange();
+    if (!built.range.length) { card.hidden = false; renderRvrMessage("Your range is empty or invalid."); return; }
+    card.hidden = false;
+    $("rvr-stats").innerHTML = "";
+    $("rvr-note").textContent = "Analysing your range on this board…";
+    var oppRanges = opponents.map(function (o) { return o.range; });
+    runRvr({
+      heroRange: built.range,
+      opponentRanges: oppRanges,
+      opponentRange: opponents.length === 1 ? opponents[0].range : null, // advantage only heads-up
+      board: board, deadCards: dead,
+      heroActual: knownCards(hero),
+      trials: 1200, maxCombos: 120, seed: 1, exactLimit: 60000,
+      _rangeSource: built.source,
+    });
+  }
+
+  function renderRvrMessage(msg) {
+    $("rvr-stats").innerHTML = "";
+    $("rvr-note").textContent = msg;
+  }
+
+  function applyRvr(res) {
+    if (!res) return;
+    var card = $("rvr-card");
+    if (state.heroRangeSource === "none") { card.hidden = true; return; }
+    if (!res.ok) { renderRvrMessage(res.error || "Range-vs-range unavailable."); return; }
+    var pct = function (x) { return (x * 100).toFixed(1) + "%"; };
+    var h = res.heroDist;
+    var stats = $("rvr-stats"); stats.innerHTML = "";
+    addStat(stats, "Your range equity", pct(h.meanEquity));
+    addStat(stats, "Nutted share", pct(h.nutFraction));
+    if (h.heroActual) {
+      addStat(stats, "Your hand", pct(h.heroActual.equity));
+      addStat(stats, "In-range rank", pct(h.heroActual.percentile) + "ile");
+    }
+    if (res.advantage) {
+      var a = res.advantage;
+      addStat(stats, "Range edge", (a.equityEdge >= 0 ? "+" : "") + (a.equityEdge * 100).toFixed(1) + "%");
+      addStat(stats, "Nut advantage", (a.nutAdvantage >= 0 ? "+" : "") + (a.nutAdvantage * 100).toFixed(1) + "%");
+    }
+    var note = [];
+    if (h.truncated) note.push("Range sampled (" + h.combosEvaluated + " combos) for speed.");
+    note.push(res.advantage ? "Heads-up range/nut advantage on this board." : "Multiway: showing your range only (no pairwise advantage).");
+    note.push("Analysis only — this does not change the EV recommendation.");
+    $("rvr-note").textContent = note.join(" ");
   }
 
   function canonicalPotForAdvanced() {
@@ -941,6 +1033,13 @@
     $("in-rakepct").addEventListener("input", function () { state.rakePercent = Math.max(0, (parseFloat(this.value || "0") || 0) / 100); scheduleAdvanced(); });
     $("in-rakecap").addEventListener("input", function () { state.rakeCap = Math.max(0, parseInt(this.value || "0", 10) || 0); scheduleAdvanced(); });
     $("in-population").addEventListener("change", function () { state.population = this.value; scheduleAdvanced(); });
+    $("in-hero-range").addEventListener("change", function () {
+      state.heroRangeSource = this.value;
+      $("hero-range-field").hidden = this.value !== "manual";
+      if (this.value === "none") $("rvr-card").hidden = true;
+      scheduleAdvanced();
+    });
+    $("in-hero-range-text").addEventListener("input", function () { state.heroRangeText = this.value; scheduleAdvanced(); });
     $("in-range-source").addEventListener("change", function () {
       state.rangeSource = this.value;
       $("manual-range-field").hidden = this.value !== "manual";

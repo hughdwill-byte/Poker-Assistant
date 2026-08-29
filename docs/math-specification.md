@@ -281,3 +281,30 @@ baseline (VPIP/PFR/3-bet) as a **reference**. These priors seed the model but do
 not by themselves change the EV until live per-opponent profiles are attached to
 the strategy call (deferred; see [future-math-roadmap.md](future-math-roadmap.md)
 #14).
+
+## 17. Range-vs-range analytics (Phase C, Wave 1.1)
+
+Point equity (one hero hand vs a range) hides how the whole hero range performs.
+`js/range-vs-range.js` evaluates every combo of a range against the opponent
+range(s) and the board runout (reusing `simulateRanges`, so ties and card
+removal stay correct) and returns:
+
+- **mean equity** of the range on the board,
+- **nut / weak fractions** (combos at/above 0.75 and at/below 0.33 by default),
+- an **equity histogram**, and
+- the hero's actual hand **equity and percentile within its own range**.
+
+`rangeAdvantage(heroDist, oppDist)` gives, on the same board:
+
+```
+equityEdge   = heroMeanEquity − oppMeanEquity      // heads-up, means sum to ~1
+nutAdvantage = heroNutFraction − oppNutFraction
+```
+
+Cost is O(combos) simulations, so a `maxCombos` guard caps the work and reports
+truncation. The Advanced UI has a "Your range for this spot" selector and a
+"Range vs range" card (range equity, nutted share, your hand's equity and
+in-range percentile, and heads-up range/nut advantage). This is an **analysis
+layer** — it explains the spot; it does not change the EV recommendation. It is
+the hero-range foundation for polarised bet-sizing and blocker-based bluff
+selection (see [future-math-roadmap.md](future-math-roadmap.md) #7, #15).

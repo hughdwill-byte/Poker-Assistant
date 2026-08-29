@@ -25,6 +25,7 @@ self.onmessage = function (e) {
   try {
     if (msg.type === "range") result = self.Poker.simulateRanges(msg.cfg || {});
     else if (msg.type === "strategy") result = self.Poker.Strategy.rangeRecommend(msg.cfg || {});
+    else if (msg.type === "rvr") result = self.Poker.RangeVsRange.analyze(msg.cfg || {});
     else result = self.Poker.simulate(msg.cfg || {});
   } catch (err) {
     result = { ok: false, error: String(err && err.message || err) };

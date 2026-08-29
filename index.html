@@ -151,6 +151,24 @@
             <input id="in-range-text" type="text" value="QQ+, AK, AQs, AJs, KQs" spellcheck="false" />
             <p class="hint" id="range-summary"></p>
           </div>
+          <div class="field">
+            <label for="in-hero-range">Your range for this spot (range-vs-range analysis)</label>
+            <select id="in-hero-range">
+              <option value="none" selected>Off</option>
+              <option value="uniform">Uniform — any two cards</option>
+              <option value="position">Your position open-raise prior</option>
+              <option value="manual">Manual range text</option>
+            </select>
+          </div>
+          <div class="field" id="hero-range-field" hidden>
+            <label for="in-hero-range-text">Your range text</label>
+            <input id="in-hero-range-text" type="text" value="QQ+, AK, AQs, KQs, JTs" spellcheck="false" />
+          </div>
+          <div class="rec-card" id="rvr-card" hidden>
+            <div class="rec-label">Range vs range</div>
+            <div class="rec-stats" id="rvr-stats"></div>
+            <div class="gto-note" id="rvr-note"></div>
+          </div>
           <div class="rec-card" id="strategy-card" hidden>
             <div class="rec-label">Range / EV strategy</div>
             <div class="rec-headline" id="strat-headline">—</div>

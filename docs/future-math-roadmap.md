@@ -45,18 +45,21 @@ throws until enabled). Neither feeds a recommendation.
   mean equity, nut/weak fractions, an equity histogram, per-combo equities, and
   — given the hero's real hand — its percentile within its own range. A
   `maxCombos` guard caps the O(combos) cost and reports truncation.
-- **Remaining:** wire a hero-range source into the Advanced UI and render the
-  distribution / percentile; the UI wiring is the next Wave-1 step. Full
-  range-vs-range (both sides, every runout) stays budget-bounded via `maxCombos`
-  and per-combo trials.
+- **UI shipped (Wave 1.1b):** an Advanced-mode "Your range for this spot"
+  selector (uniform / position prior / manual) drives a "Range vs range" card
+  showing your range equity, nutted share, your hand's equity and its in-range
+  percentile, and — heads-up — the range edge and nut advantage. Runs off the
+  main thread (worker `rvr` job) with stale-job handling; analysis-only.
+- **Remaining:** none for #3 itself; it now feeds #4 (range/nut advantage is
+  already exposed) and #7/#15.
 
 ### 4. Range advantage & nut advantage metrics
-- **Why:** who can bet big on a given board depends on which range holds more
-  strong hands and more nut combos.
-- **Hook:** a board-conditioned metric over both ranges in `hand-features.js` /
-  a new `range-advantage.js`, feeding size selection and bluff frequency.
-- **Needs first:** #3 (distributions) and a hero range; validation against
-  solver outputs so "advantage" maps to real strategy, not a slogan.
+- **Status:** **shipped heads-up (Phase C, Wave 1.1)** via
+  `RangeVsRange.rangeAdvantage(heroDist, oppDist)` → equity edge + nut advantage
+  on the board, surfaced in the "Range vs range" card. Built on #3.
+- **Remaining:** feed these metrics into size selection / bluff frequency
+  (currently displayed, not yet wired into candidate generation — see #7), and a
+  multiway generalisation (advantage is only shown heads-up today).
 
 ### 5. Minimum Defense Frequency (MDF) and alpha
 - **Status:** the **reference layer is shipped** (Phase C, Wave 0) as

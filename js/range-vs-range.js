@@ -160,8 +160,38 @@
     };
   }
 
+  /**
+   * One-call analysis for the UI: the hero-range distribution vs the opponents,
+   * and (heads-up only, where it is exact and meaningful) the opponent-range
+   * distribution and the resulting range/nut advantage.
+   * @param {Object} cfg
+   *   heroRange, opponentRanges[], board, deadCards, trials, seed, exactLimit,
+   *   maxCombos, heroActual, opponentRange (the single range for advantage)
+   */
+  function analyze(cfg) {
+    var heroDist = equityDistribution({
+      range: cfg.heroRange, opponentRanges: cfg.opponentRanges,
+      board: cfg.board, deadCards: cfg.deadCards, trials: cfg.trials,
+      seed: cfg.seed, exactLimit: cfg.exactLimit, maxCombos: cfg.maxCombos,
+      heroActual: cfg.heroActual,
+    });
+    if (!heroDist.ok) return { ok: false, error: heroDist.error };
+    var oppDist = null, advantage = null;
+    if (cfg.opponentRange) {
+      oppDist = equityDistribution({
+        range: cfg.opponentRange, opponentRanges: [cfg.heroRange],
+        board: cfg.board, deadCards: cfg.deadCards, trials: cfg.trials,
+        seed: cfg.seed != null ? cfg.seed + 5000 : null, exactLimit: cfg.exactLimit,
+        maxCombos: cfg.maxCombos,
+      });
+      if (oppDist.ok) advantage = rangeAdvantage(heroDist, oppDist);
+    }
+    return { ok: true, heroDist: heroDist, oppDist: oppDist, advantage: advantage };
+  }
+
   Poker.RangeVsRange = {
     equityDistribution: equityDistribution,
     rangeAdvantage: rangeAdvantage,
+    analyze: analyze,
   };
 })(typeof self !== "undefined" ? self : this);
