@@ -350,3 +350,22 @@ bluffs only part of the time); a medium hand checks. The card shows
 construction (an indifference argument), not invented — and it too is shown
 alongside, never inside, the EV recommendation. Frequencies for the
 facing-a-bet decision (call/raise/fold mixes) are deferred (#6 remainder).
+
+## 19. Equilibrium defense verdict (Phase C, Wave 1.5)
+
+`js/gto-defense.js` is the first place the equilibrium layer produces an action.
+Facing a bet of `C` into a pot of `P` (so the villain bet `C` into `P − C`), the
+defender's minimum defense frequency is `MDF = (P − C)/P`. Given where the
+hero's actual hand ranks within the hero range (its percentile from §17), the
+hand should **defend** (call/raise) when it is in the top `MDF` fraction, i.e.
+`percentile ≥ 1 − MDF`, and **fold** otherwise.
+
+`reconcile(verdict, evAction)` compares the equilibrium verdict with the
+exploitative EV recommendation. Agreement is common; a disagreement is
+informative — the EV line folding a hand MDF would defend means it reads the
+opponent as under-bluffing, and continuing a hand MDF would fold means it reads
+them as over-bluffing. Both are shown in the Range-vs-range card; the EV table
+remains the primary recommendation (the equilibrium verdict never silently
+overrides it). Replacing the model's fold estimate with MDF wholesale, and a
+confidence-weighted blend, are deferred
+(see [future-math-roadmap.md](future-math-roadmap.md) #5).

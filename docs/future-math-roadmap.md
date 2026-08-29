@@ -68,13 +68,17 @@ throws until enabled). Neither feeds a recommendation.
   validated against the spec §8.4 table. It is surfaced in the Advanced UI as a
   "GTO reference" readout and a balanced-bluff column, **reference-only**. What
   remains deferred is *wiring* it into advice.
-- **Why:** replace heuristic fold estimates with indifference-based defense.
-- **Hook:** wiring would replace `opponent-model.actionLikelihood`'s fold
-  estimate with the `equilibrium.mdf`/`defenseAssessment` output where the
-  opponent is assumed near-optimal.
-- **Needs first:** a decision on exploit-vs-GTO posture per opponent (MDF
-  assumes a defending opponent; exploitative play deviates), and calibration so
-  MDF is used only where population data supports near-optimal defense.
+- **Wired (Phase C, Wave 1.5):** `js/gto-defense.js defenseVerdict()` turns MDF
+  plus the hero hand's in-range percentile (from #3) into a DEFEND / FOLD action
+  facing a bet — the first equilibrium output that is an action, not a number.
+  `reconcile()` compares it with the exploitative EV recommendation and explains
+  any gap (the EV line deviating means it reads the opponent as over- or
+  under-bluffing). Shown in the Range-vs-range card as a labelled equilibrium
+  verdict; the EV table stays primary (no silent override).
+- **Remaining:** replacing `opponent-model.actionLikelihood`'s fold estimate
+  wholesale with MDF where the opponent is near-optimal, and a per-opponent
+  blend weight from sample confidence; today both verdicts are shown side by
+  side and the user/EV chooses.
 
 ### 6. Mixed-strategy / frequency output
 - **Status:** **shipped for the range-plan (Phase C, Wave 1.4).**

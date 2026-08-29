@@ -22,6 +22,7 @@ require("../js/action-ev.js");
 require("../js/draw-odds.js");
 require("../js/equilibrium.js");
 require("../js/bet-composition.js");
+require("../js/gto-defense.js");
 require("../js/implied-odds.js");
 require("../js/tournament-icm.js");
 require("../js/strategy.js");

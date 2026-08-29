@@ -521,10 +521,10 @@
     };
     $("strat-headline").textContent = "Calculating range EV…";
     runStrategy(dc);
-    computeRvr(opponents, hero, dc.board, dc.deadCards, P0);
+    computeRvr(opponents, hero, dc.board, dc.deadCards, P0, C0);
   }
 
-  var rvrPot = 0; // canonical pot captured for the range-vs-range bet-composition plan
+  var rvrPot = 0, rvrToCall = 0; // canonical pot + call captured for the range-vs-range plan/defense
 
   // Range-vs-range analysis (Wave 1.1): how the hero's whole range performs on
   // this board, where the hero's actual hand ranks within it, and (heads-up)
@@ -555,8 +555,9 @@
     return { range: Ranges.normalise(Ranges.removeBlockers(base, blockers)), source: source };
   }
 
-  function computeRvr(opponents, hero, board, dead, pot) {
+  function computeRvr(opponents, hero, board, dead, pot, toCall) {
     rvrPot = pot || 0;
+    rvrToCall = toCall || 0;
     var card = $("rvr-card");
     if (!card) return;
     if (state.heroRangeSource === "none") { card.hidden = true; return; }
@@ -601,6 +602,26 @@
       addStat(stats, "Range edge", (a.equityEdge >= 0 ? "+" : "") + (a.equityEdge * 100).toFixed(1) + "%");
       addStat(stats, "Nut advantage", (a.nutAdvantage >= 0 ? "+" : "") + (a.nutAdvantage * 100).toFixed(1) + "%");
     }
+    // GTO defense verdict (#5): facing a bet, MDF + the hero hand's in-range
+    // percentile give a defend/fold call. Shown as a labelled equilibrium
+    // verdict beside the EV recommendation (the EV table stays primary).
+    if (P.GtoDefense && rvrToCall > 0 && h.heroActual && h.heroActual.percentile != null) {
+      var gv = P.GtoDefense.defenseVerdict({ P: rvrPot, C: rvrToCall, heroPercentile: h.heroActual.percentile });
+      if (gv) {
+        var evAction = (lastStrategy && lastStrategy.action) || null;
+        var rec = P.GtoDefense.reconcile(gv, evAction);
+        var gd = document.createElement("div");
+        gd.className = "rvr-plan gto-defense";
+        var verdictTxt = gv.verdict === "defend" ? "DEFEND (call/raise)" : "FOLD";
+        gd.innerHTML = '<div class="gto-title">Equilibrium defense (facing this bet)</div>' +
+          '<div class="gto-row"><span>MDF (defend the top)</span><b>' + (gv.mdf * 100).toFixed(0) + "%</b></div>" +
+          '<div class="gto-row"><span>Your hand ranks</span><b>' + (gv.heroPercentile * 100).toFixed(0) + "ile</b></div>" +
+          '<div class="gto-row"><span>Equilibrium verdict</span><b class="role-' + (gv.verdict === "defend" ? "value" : "check") + '">' + verdictTxt + "</b></div>" +
+          (rec.note ? '<div class="gto-note">' + rec.note + "</div>" : "");
+        $("rvr-stats").appendChild(gd);
+      }
+    }
+
     // Polarised bet-composition plan (#7): where the hero's hand plays at a few
     // reference sizes, and the balanced value/bluff split of the whole range.
     var heroCards = knownCards(state.players[state.heroIndex]);
@@ -649,9 +670,11 @@
     }
   }
 
+  var lastStrategy = null; // last range-EV recommendation, for GTO-vs-EV reconciliation
   function applyStrategy(result) {
     if (!result) return;
-    if (result.error) { renderStrategyMessage("Range strategy unavailable", [result.error]); return; }
+    if (result.error) { lastStrategy = null; renderStrategyMessage("Range strategy unavailable", [result.error]); return; }
+    lastStrategy = result;
     renderStrategy(result);
   }
 

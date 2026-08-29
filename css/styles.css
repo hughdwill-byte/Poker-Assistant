@@ -713,3 +713,6 @@ body {
 .rvr-plan .role-bluff { color: var(--accent); }
 .rvr-plan .role-check { color: var(--muted); }
 .rvr-plan .plan-bluff { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+/* ---- GTO defense verdict (Phase C, Wave 1.5) ---- */
+.gto-defense { margin-top: 8px; }
