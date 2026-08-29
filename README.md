@@ -27,6 +27,14 @@ can host it for free on **GitHub Pages** and use it live at the table.
   your cards and the board automatically, so you barely type anything. Uses the
   Screen Capture API — it can watch a *different* site than this app. Desktop
   only, and intended for play-money / practice / replay use.
+- **HUD Overlay mode (browser extension).** A **war-style tactical HUD** you can
+  float over any tab — three panels (a movable/resizable Table box, a scrollable
+  Info panel, and a border-docked Taskbar) that drag, resize, snap, and
+  **adaptively reflow** so the UI is never clipped. Ships as a Manifest V3
+  extension (`activeTab`/`scripting`/`storage` only) and an in-app **🎯 HUD**
+  toggle. **Advisory only:** it reads nothing from the underlying site and takes
+  no action — every number comes from inputs you type into the HUD, computed by
+  the same equity engine. See the [HUD Overlay section](#-hud-overlay-mode-browser-extension).
 - **Best / worst outlook.** For your hand it shows the strongest and weakest
   five-card hand you can still finish with by the river — your ceiling and
   floor — found by enumerating every remaining board runout from the unseen
