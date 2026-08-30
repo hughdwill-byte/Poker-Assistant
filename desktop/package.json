@@ -1,0 +1,39 @@
+{
+  "name": "poker-assistant-desktop",
+  "productName": "Poker Assistant HUD Overlay",
+  "version": "1.0.0",
+  "description": "Frameless, transparent, always-on-top desktop HUD overlay for Poker Assistant. Advisory only — display-only, no poker-client scraping and no automated actions.",
+  "private": true,
+  "author": "Poker Assistant",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.pokerassistant.hudoverlay",
+    "productName": "Poker Assistant HUD Overlay",
+    "files": [
+      { "from": ".", "to": "desktop", "filter": [
+        "main.js", "preload.js", "overlay.html", "overlay.css",
+        "overlay-logic.js", "overlay-bridge.js", "package.json"
+      ] },
+      { "from": "../js", "to": "js" },
+      { "from": "../extension", "to": "extension" },
+      { "from": "../css", "to": "css" },
+      { "from": "../index.html", "to": "index.html" }
+    ],
+    "asar": false,
+    "extraMetadata": { "main": "desktop/main.js" },
+    "directories": { "output": "dist" },
+    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.utilities" },
+    "win": { "target": ["nsis", "zip"] },
+    "linux": { "target": ["AppImage", "zip"], "category": "Utility" }
+  }
+}
