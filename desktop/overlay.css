@@ -1,0 +1,61 @@
+/*
+ * overlay.css - desktop-window chrome for the Electron overlay. The HUD panels
+ * themselves are styled by the reused extension/hud.css (loaded into the HUD's
+ * Shadow DOM). This file only handles the transparent window body and the
+ * Iron-Man "helmet visor" framing drawn around the screen edges.
+ *
+ * Everything here is decorative and non-interactive (pointer-events:none) so it
+ * never interferes with click-through hit-testing.
+ */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent !important;   /* let the desktop show through */
+  overflow: hidden;
+  /* A faint inner vignette + scanline wash reads as a visor without hiding the
+     screen behind it; kept very low alpha for legibility of the app beneath. */
+}
+
+.visor {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;                 /* never blocks clicks */
+  z-index: 2147483646;                  /* just below the HUD host (max int) */
+}
+
+/* corner targeting arcs */
+.visor-arc {
+  position: absolute;
+  width: 120px; height: 120px;
+  border: 2px solid rgba(255, 176, 46, 0.35);
+  box-shadow: 0 0 14px rgba(255, 176, 46, 0.12);
+  border-radius: 4px;
+}
+.visor-arc-tl { top: 10px; left: 10px; border-right: none; border-bottom: none; }
+.visor-arc-tr { top: 10px; right: 10px; border-left: none; border-bottom: none; }
+.visor-arc-bl { bottom: 10px; left: 10px; border-right: none; border-top: none; }
+.visor-arc-br { bottom: 10px; right: 10px; border-left: none; border-top: none; }
+
+/* very subtle full-screen scanline texture */
+.visor-scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(87, 255, 154, 0.020) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: screen;
+}
+
+/* Desktop-only taskbar buttons live inside the HUD's Shadow DOM, so their base
+   look comes from hud.css; this state class is applied there via the ::part-
+   free path (the class is set on the element directly). It is duplicated inside
+   the shadow root by hud.css variables, so here we only guard reduced-motion at
+   the document level. */
+@media (prefers-reduced-motion: reduce) {
+  .visor-arc { box-shadow: none; }
+  .visor-scan { display: none; }
+}

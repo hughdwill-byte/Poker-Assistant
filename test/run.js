@@ -25,6 +25,7 @@ var suites = [
   "./priors-recency.test",
   "./watch-inference.test",
   "./hud-layout.test",
+  "./overlay-logic.test",
 ];
 
 suites.forEach(function (name) {

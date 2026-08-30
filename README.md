@@ -307,6 +307,72 @@ checklist.
 
 ---
 
+## 🖥️ Desktop HUD Overlay (Electron, always-on-top)
+
+The same tactical HUD as a **desktop app** — a frameless, transparent,
+**always-on-top** window that floats over *everything*: your browser, a native
+poker client, or a fullscreen app. Iron-Man/war-room feel, so you see the table
+and every assistant readout at once. It lives in **[`/desktop`](desktop/)** as a
+small Electron app and reuses the existing `js/` math modules, the equity Web
+Worker, the Shadow-DOM HUD, and the real web app (for Watch mode) **unchanged**.
+
+**Positioning — read this.** The desktop overlay is **display-only** and
+**advisory**, for **practice / play-money / replay** study. It **does not** hook
+into, scrape, or read the poker client's process or DOM, and performs **no
+automated poker action**. Every number comes from inputs you type into the HUD
+and from the app's existing Watch-mode screen reading (run in the WATCH view).
+It runs fully offline.
+
+### Run it
+```bash
+cd desktop
+npm install     # Electron + electron-builder — installed ONLY here
+npm start
+```
+The web app stays **buildless and dependency-free**; these dependencies are
+isolated to `/desktop`. To build installers: `npm run dist` (dmg/zip · nsis/zip ·
+AppImage/zip). See **[desktop/README.md](desktop/README.md)**.
+
+### What it does
+- **Always-on-top over fullscreen** — `setAlwaysOnTop(true,'screen-saver')` plus
+  `setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true})` on macOS; the
+  top-most borderless window on Windows/Linux. (A true *exclusive*-fullscreen
+  DirectX client can still stay above any window — use borderless mode; noted in
+  the QA doc.)
+- **Click-through** — the window ignores mouse events with `{forward:true}` so
+  clicks pass through empty areas to the app beneath; when the pointer is over a
+  HUD panel the renderer hit-tests and asks main to capture input. A **LOCKED ⇄
+  LIVE** hotkey/button flips between click-through and fully-interactive.
+- **Three panels** — the movable/resizable Table box and Info panel plus a
+  border-docked Taskbar (adds LOCK, DISPLAY, WATCH, EXIT to the shared HUD
+  controls). Same drag/resize/clamp/snap/z-order and adaptive `ResizeObserver`
+  reflow as the browser HUD.
+- **Global hotkeys** — show/hide (`Ctrl/Cmd+Shift+H`), lock toggle
+  (`…+Shift+L`), cycle display (`…+Shift+D`).
+- **Multi-monitor** — launches on the display under the cursor; DISPLAY / the
+  hotkey move it across monitors and cover the whole chosen display.
+- **Persistence** — box layout in the renderer's `localStorage`; display choice,
+  Taskbar edge, mode and hotkeys in `overlay-config.json` (app userData). RESET
+  restores defaults; EXIT quits cleanly and unregisters the hotkeys.
+- **Watch mode** — the WATCH button opens the *unchanged* full web app (which
+  contains Watch-mode screen reading); a **◄ HUD** button returns to the overlay.
+
+### Data flow
+Manual inputs (and, in the WATCH view, the app's Watch-mode screen reading) →
+the existing equity **Web Worker** and `js/` math modules → the HUD Info panel.
+No path reads the poker client; the overlay only *displays* computed advice.
+
+- **Reuse, not fork:** `overlay.html` sets `<base href="../">` so the renderer
+  loads the repo's engine and worker in place. Pure overlay logic (hit-testing,
+  multi-monitor bounds, config persistence) lives in `desktop/overlay-logic.js`
+  and shares `Poker.HudLayout` with the browser HUD; both are unit-tested
+  (`test/overlay-logic.test.js`, `test/hud-layout.test.js`).
+
+See **[docs/desktop-overlay-qa.md](docs/desktop-overlay-qa.md)** for the manual
+QA checklist (the parts that need a real screen and multiple monitors).
+
+---
+
 ## 🧮 The maths (and why it's trustworthy)
 
 Let `e` be your equity — your probability of winning the pot, with ties counted

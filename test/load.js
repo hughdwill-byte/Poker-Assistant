@@ -34,4 +34,8 @@ require("../js/persistence.js");
 // and test under the same harness as the engine modules.
 require("../extension/hud-layout.js");
 
+// Desktop (Electron) overlay pure logic — hit-testing, multi-monitor bounds,
+// config persistence. No Electron/DOM, so it loads under the Node harness.
+require("../desktop/overlay-logic.js");
+
 module.exports = global.Poker;
