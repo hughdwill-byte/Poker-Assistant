@@ -114,8 +114,45 @@ distributables needs a real desktop OS with the dev dependencies installed and
 was **not** verified in the headless build environment — validate the produced
 binary on your target OS. The **`npm start`** dev run is the verified path.
 
+## J. Calibration Mode (default OFF, toggleable in-HUD layer)
+- [ ] On launch the clean HUD shows — **no** anchor, handles, region outlines or
+      labels are visible (Calibration Mode defaults OFF, every launch).
+- [ ] Toggle ON via the Taskbar **CALIB** button **or** `Ctrl/Cmd+Shift+C`:
+      the editing layer appears, the HUD panels dim and go non-interactive.
+- [ ] The **table anchor** rectangle shows with drag + edge/corner resize;
+      **LOCK ASPECT** keeps the table ratio while resizing.
+- [ ] All calibration regions (seat spot/cards/bet, board + suits, hero + suits,
+      pot/stack/to-call/my-bet) are drawn from the active preset in category
+      colors with labels.
+- [ ] **Move/resize the anchor → the whole region set moves/resizes together**
+      (regions are anchor-normalized). Fine-tune a single region by dragging it.
+- [ ] **FIT: CONTAIN/STRETCH** toggles aspect handling; CONTAIN letterboxes so
+      regions never stretch onto the wrong area.
+- [ ] **DONE · SAVE & HIDE** writes normalized values to the active preset and
+      returns to the clean HUD; **ESC** (or CANCEL) exits **without** saving and
+      leaves the preset intact.
+- [ ] Re-open Calibration Mode → your edits persisted.
+
+## K. Presets (named, shareable, cross-monitor)
+- [ ] **NEW / DUP / DEL** manage named presets; the dropdown selects the active
+      one; the name field renames it.
+- [ ] **EXPORT** copies the preset JSON (also shown in the text box) — paste it
+      elsewhere to share.
+- [ ] **IMPORT**: paste a preset JSON and click IMPORT → it loads as a new preset.
+- [ ] Export from one machine, import on another, place the anchor once → the
+      whole calibration lands correctly regardless of resolution.
+- [ ] Switch the overlay to a **different monitor** (DISPLAY), re-place the anchor
+      once → all regions remap without distortion (aspect preserved under CONTAIN).
+- [ ] A pre-existing Watch calibration (`pokerwatch.regions.v1`) is **migrated**
+      into a preset on first open — nothing is lost.
+- [ ] A region dragged outside the anchor is flagged (red outline) rather than
+      silently mismapping.
+
 ## Known limitations
 - A truly exclusive-fullscreen (not borderless) DirectX/OpenGL client can render
   above all windows; use the poker client in windowed/borderless mode.
 - If a display's CSP or platform blocks web workers, the equity engine can't
   start; the HUD still mounts and reports it, and layout/controls keep working.
+- Wiring the *web* Watch reader to consume a shared preset live is available via
+  `Poker.CalibrationPreset.presetToFrameRegions(...)`; the desktop overlay is the
+  primary calibration surface today.

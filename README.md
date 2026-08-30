@@ -357,6 +357,36 @@ AppImage/zip). See **[desktop/README.md](desktop/README.md)**.
 - **Watch mode** — the WATCH button opens the *unchanged* full web app (which
   contains Watch-mode screen reading); a **◄ HUD** button returns to the overlay.
 
+### Calibration Mode & shareable presets
+Watch-mode calibration is a **default-OFF, toggleable editing layer** inside the
+overlay — the clean HUD is all you see until you ask for it.
+
+- **Toggle:** the Taskbar **CALIB** button or **`Ctrl/Cmd+Shift+C`**. When ON the
+  HUD dims and an editing layer appears; **DONE · SAVE & HIDE** returns to the
+  clean HUD, **ESC** exits without saving. It boots OFF every launch.
+- **Anchor model (resolution-independent):** you place **one anchor rectangle** =
+  the poker-table bounding box. Every region (seat spot/cards/bet, board + suits,
+  hero + suits, pot/stack/to-call/my-bet) is stored **normalized `{x,y,w,h}` in
+  [0,1] relative to the anchor**, never absolute pixels. Move/resize the anchor and
+  the whole set follows; switch monitors and you re-place the anchor once, so
+  calibration no longer breaks across resolutions.
+- **Aspect (`fitMode`):** `contain` (default) letterboxes the table aspect inside
+  the anchor so regions never stretch onto the wrong area on differently-shaped
+  anchors; `stretch` fills exactly. A **lock-aspect** toggle holds the ratio while
+  resizing.
+- **Shareable presets:** named presets (new/duplicate/rename/delete/select) saved
+  locally as **versioned JSON**; **export** (copy) and **import** (paste) to share
+  a calibration — the recipient places the anchor once and it lands.
+- **Migration:** an existing Watch calibration (`pokerwatch.regions.v1`) is
+  converted to a normalized preset on first open (anchor inferred from region
+  bounds) — nothing is lost.
+- **Shared model:** the pure coordinate math is `js/calibration-preset.js`
+  (`Poker.CalibrationPreset`), consumable by **both** the web Watch reader (via
+  `presetToFrameRegions`) and the overlay; unit-tested
+  (`test/calibration-preset.test.js`). The OFF/ON state machine is
+  `desktop/calibration-toggle.js` (`test/calibration-toggle.test.js`). An example
+  region map is in [`docs/calibration-box-map.json`](docs/calibration-box-map.json).
+
 ### Data flow
 Manual inputs (and, in the WATCH view, the app's Watch-mode screen reading) →
 the existing equity **Web Worker** and `js/` math modules → the HUD Info panel.

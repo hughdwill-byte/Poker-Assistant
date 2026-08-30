@@ -107,6 +107,7 @@
     toggleShow: "CommandOrControl+Shift+H",
     toggleInteractive: "CommandOrControl+Shift+L",
     cycleDisplay: "CommandOrControl+Shift+D",
+    toggleCalibration: "CommandOrControl+Shift+C",
   };
   function defaultConfig() {
     return {
@@ -118,6 +119,7 @@
         toggleShow: DEFAULT_HOTKEYS.toggleShow,
         toggleInteractive: DEFAULT_HOTKEYS.toggleInteractive,
         cycleDisplay: DEFAULT_HOTKEYS.cycleDisplay,
+        toggleCalibration: DEFAULT_HOTKEYS.toggleCalibration,
       },
     };
   }
@@ -135,6 +137,7 @@
         toggleShow: hk.toggleShow || d.hotkeys.toggleShow,
         toggleInteractive: hk.toggleInteractive || d.hotkeys.toggleInteractive,
         cycleDisplay: hk.cycleDisplay || d.hotkeys.cycleDisplay,
+        toggleCalibration: hk.toggleCalibration || d.hotkeys.toggleCalibration,
       },
     });
   }
@@ -155,6 +158,7 @@
           toggleShow: hk.toggleShow || d.hotkeys.toggleShow,
           toggleInteractive: hk.toggleInteractive || d.hotkeys.toggleInteractive,
           cycleDisplay: hk.cycleDisplay || d.hotkeys.cycleDisplay,
+          toggleCalibration: hk.toggleCalibration || d.hotkeys.toggleCalibration,
         },
       };
     } catch (e) {

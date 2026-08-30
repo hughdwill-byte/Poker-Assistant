@@ -190,6 +190,10 @@ function registerHotkeys() {
     saveConfig();
   });
   tryReg(hk.cycleDisplay, () => cycleDisplay());
+  tryReg(hk.toggleCalibration, () => {
+    // The renderer owns the calibration editing layer; just notify it.
+    if (win && !appView) win.webContents.send("overlay:hotkey", "calibration");
+  });
 }
 
 function cycleDisplay() {

@@ -26,6 +26,8 @@ var suites = [
   "./watch-inference.test",
   "./hud-layout.test",
   "./overlay-logic.test",
+  "./calibration-preset.test",
+  "./calibration-toggle.test",
 ];
 
 suites.forEach(function (name) {
