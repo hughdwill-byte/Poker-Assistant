@@ -290,20 +290,39 @@
       el.style.left = px.x + "px"; el.style.top = px.y + "px";
       el.style.width = px.w + "px"; el.style.height = px.h + "px";
       el.style.borderColor = reg.color;
-      el.title = reg.label;
+      el.title = reg.label + " — drag to move, drag a handle to resize";
       if (CP.regionOutOfBounds(reg)) el.classList.add("calib-region-warn");
       var lab = document.createElement("span");
       lab.className = "calib-region-label"; lab.textContent = reg.label; lab.style.color = reg.color;
       el.appendChild(lab);
-      wireRegionDrag(el, i);
+      // Per-box resize handles (shown on hover / when selected).
+      ["n", "s", "e", "w", "ne", "nw", "se", "sw"].forEach(function (dir) {
+        var hEl = document.createElement("span");
+        hEl.className = "calib-rh calib-rh-" + dir;
+        hEl.setAttribute("data-dir", dir);
+        el.appendChild(hEl);
+      });
+      wireRegion(el, i);
       wrap.appendChild(el);
     });
   }
 
-  // Per-region fine-tune: drag writes back NORMALIZED coords vs the anchor.
-  function wireRegionDrag(el, idx) {
+  var regionZ = 100;  // bring a clicked box to the front so overlapping boxes are reachable
+  function selectRegion(el) {
+    var wrap = layer.querySelector(".calib-regions");
+    if (wrap) Array.prototype.forEach.call(wrap.querySelectorAll(".calib-region.calib-sel"), function (o) { o.classList.remove("calib-sel"); });
+    el.classList.add("calib-sel");
+    el.style.zIndex = String(++regionZ);
+  }
+
+  // Per-region MOVE (drag the body) + RESIZE (drag a handle). Writes back
+  // NORMALIZED coords/size vs the anchor. Move snaps to the green guides.
+  function wireRegion(el, idx) {
+    // ---- move (drag the box body) ----
     var d = null;
     on(el, "pointerdown", function (e) {
+      if (e.target && e.target.classList.contains("calib-rh")) return; // handle -> resize
+      selectRegion(el);
       d = { px: e.clientX, py: e.clientY, l: parseFloat(el.style.left), t: parseFloat(el.style.top) };
       el.setPointerCapture(e.pointerId); e.stopPropagation(); e.preventDefault();
     });
@@ -311,19 +330,47 @@
       if (!d) return;
       var nx = d.l + (e.clientX - d.px), ny = d.t + (e.clientY - d.py);
       var w = parseFloat(el.style.width), h = parseFloat(el.style.height);
-      // Snap to the anchor's edges/centre and to any other box's edges/centre;
-      // matched lines glow green (they are always flat/vertical, i.e. at 90°).
-      var others = otherRegionRectsPx(idx);
-      var snap = CP.snapMove({ x: nx, y: ny, w: w, h: h }, others, anchorPx, 6);
+      var snap = CP.snapMove({ x: nx, y: ny, w: w, h: h }, otherRegionRectsPx(idx), anchorPx, 6);
       nx = snap.rect.x; ny = snap.rect.y;
       showGuides(snap.guides);
       el.classList.toggle("calib-snapped", snap.snappedV || snap.snappedH);
-      var norm = CP.normalize({ x: nx, y: ny, w: w, h: h }, anchorPx, { tableAspect: active.tableAspect, fitMode: active.fitMode });
-      active.regions[idx].x = norm.x; active.regions[idx].y = norm.y;
-      el.style.left = nx + "px"; el.style.top = ny + "px";
-      el.classList.toggle("calib-region-warn", CP.regionOutOfBounds(active.regions[idx]));
+      writeRegion(idx, el, nx, ny, w, h);
     });
     on(el, "pointerup", function (e) { d = null; hideGuides(); el.classList.remove("calib-snapped"); try { el.releasePointerCapture(e.pointerId); } catch (x) {} });
+
+    // ---- resize (drag any of the 8 handles) ----
+    Array.prototype.forEach.call(el.querySelectorAll(".calib-rh"), function (hEl) {
+      var dir = hEl.getAttribute("data-dir"), rz = null;
+      on(hEl, "pointerdown", function (e) {
+        selectRegion(el);
+        rz = { px: e.clientX, py: e.clientY,
+          l: parseFloat(el.style.left), t: parseFloat(el.style.top),
+          w: parseFloat(el.style.width), h: parseFloat(el.style.height) };
+        hEl.setPointerCapture(e.pointerId); e.stopPropagation(); e.preventDefault();
+      });
+      on(hEl, "pointermove", function (e) {
+        if (!rz) return;
+        var dx = e.clientX - rz.px, dy = e.clientY - rz.py;
+        var x = rz.l, y = rz.t, w = rz.w, h = rz.h;
+        var MIN = 8;
+        if (dir.indexOf("e") >= 0) w = Math.max(MIN, rz.w + dx);
+        if (dir.indexOf("s") >= 0) h = Math.max(MIN, rz.h + dy);
+        if (dir.indexOf("w") >= 0) { w = Math.max(MIN, rz.w - dx); x = rz.l + (rz.w - w); }
+        if (dir.indexOf("n") >= 0) { h = Math.max(MIN, rz.h - dy); y = rz.t + (rz.h - h); }
+        writeRegion(idx, el, x, y, w, h);
+      });
+      on(hEl, "pointerup", function (e) { rz = null; try { hEl.releasePointerCapture(e.pointerId); } catch (x) {} });
+    });
+  }
+
+  // Apply a pixel rect to a region element and store it back as normalized.
+  function writeRegion(idx, el, x, y, w, h) {
+    el.style.left = x + "px"; el.style.top = y + "px";
+    el.style.width = w + "px"; el.style.height = h + "px";
+    var norm = CP.normalize({ x: x, y: y, w: w, h: h }, anchorPx, { tableAspect: active.tableAspect, fitMode: active.fitMode });
+    active.regions[idx].x = norm.x; active.regions[idx].y = norm.y;
+    active.regions[idx].w = norm.w; active.regions[idx].h = norm.h;
+    el.classList.toggle("calib-region-warn", CP.regionOutOfBounds(active.regions[idx]));
   }
 
   // Pixel rects of every region EXCEPT the one being dragged (snap targets).
@@ -358,14 +405,26 @@
     ".calib-h-e{right:-8px;top:50%;margin-top:-7px;cursor:ew-resize}.calib-h-s{bottom:-8px;left:50%;margin-left:-7px;cursor:ns-resize}" +
     ".calib-h-se{right:-8px;bottom:-8px;cursor:nwse-resize}.calib-h-sw{left:-8px;bottom:-8px;cursor:nesw-resize}" +
     ".calib-h-ne{right:-8px;top:-8px;cursor:nesw-resize}.calib-h-nw{left:-8px;top:-8px;cursor:nwse-resize}" +
-    ".calib-region{position:absolute;border:1.5px solid #9a6fd0;background:rgba(0,0,0,.15);cursor:move;touch-action:none}" +
+    // Regions sit ABOVE the anchor so each box is individually grabbable even
+    // over the anchor's body; a selected box floats above its neighbours.
+    ".calib-region{position:absolute;border:1.5px solid #9a6fd0;background:rgba(0,0,0,.15);cursor:move;touch-action:none;z-index:55}" +
+    ".calib-region:hover{background:rgba(87,255,154,.10)}" +
+    ".calib-region.calib-sel{border-width:2px;box-shadow:0 0 0 1px rgba(255,176,46,.6)}" +
     ".calib-region.calib-snapped{border-color:#57ff9a;box-shadow:0 0 8px rgba(87,255,154,.7)}" +
     ".calib-region-warn{outline:2px solid #ff6b6b}" +
-    ".calib-guide{position:absolute;background:#57ff9a;box-shadow:0 0 6px rgba(87,255,154,.8);pointer-events:none;z-index:60}" +
+    // Per-box resize handles: hidden until you hover or select the box, so 36
+    // boxes don't drown the screen in handles.
+    ".calib-rh{position:absolute;width:11px;height:11px;background:#0a0e0c;border:1.5px solid #ffb02e;border-radius:2px;display:none;z-index:57;touch-action:none}" +
+    ".calib-region:hover .calib-rh,.calib-region.calib-sel .calib-rh{display:block}" +
+    ".calib-rh-n{top:-6px;left:50%;margin-left:-6px;cursor:ns-resize}.calib-rh-s{bottom:-6px;left:50%;margin-left:-6px;cursor:ns-resize}" +
+    ".calib-rh-e{right:-6px;top:50%;margin-top:-6px;cursor:ew-resize}.calib-rh-w{left:-6px;top:50%;margin-top:-6px;cursor:ew-resize}" +
+    ".calib-rh-ne{top:-6px;right:-6px;cursor:nesw-resize}.calib-rh-sw{bottom:-6px;left:-6px;cursor:nesw-resize}" +
+    ".calib-rh-nw{top:-6px;left:-6px;cursor:nwse-resize}.calib-rh-se{bottom:-6px;right:-6px;cursor:nwse-resize}" +
+    ".calib-guide{position:absolute;background:#57ff9a;box-shadow:0 0 6px rgba(87,255,154,.8);pointer-events:none;z-index:9998}" +
     ".calib-guide-v{top:0;bottom:0;width:1px;margin-left:-0.5px}.calib-guide-h{left:0;right:0;height:1px;margin-top:-0.5px}" +
     ".calib-region-label{position:absolute;top:-13px;left:0;font:9px monospace;white-space:nowrap;text-shadow:0 0 3px #000}" +
     ".calib-toolbar{position:absolute;left:8px;right:8px;top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;" +
-    "background:rgba(10,14,12,.94);border:1px solid #1c2a22;padding:8px;border-radius:4px}" +
+    "background:rgba(10,14,12,.94);border:1px solid #1c2a22;padding:8px;border-radius:4px;z-index:9999}" +
     ".calib-title{color:#ffb02e;font:700 12px monospace;letter-spacing:.18em}" +
     ".calib-select,.calib-name,.calib-io{background:#05100b;color:#d7e4dc;border:1px solid #1c2a22;font:12px monospace;padding:4px 6px;border-radius:2px}" +
     ".calib-name{width:150px}.calib-io{width:100%;height:64px}" +
