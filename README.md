@@ -288,10 +288,18 @@ AA** contrast.
 
 ### Install & architecture
 - `chrome://extensions` → **Developer mode** → **Load unpacked** → pick the repo
-  root (the folder with `manifest.json`). Click the amber reticle icon on any
-  page to toggle the HUD. The HUD Taskbar's **CALIB** button opens Calibration
-  Mode (see *Calibration Mode & shareable presets* below) — the extension now
-  ships the same calibration editor as the desktop overlay.
+  root (the folder with `manifest.json`). Click the amber reticle icon — a small
+  menu opens with two choices:
+  - **🖥 Open full app (auto-read Watch)** — launches the *entire* Poker
+    Assistant (table, advanced EV, and **Watch-mode screen reading** that
+    auto-fills the cards) in its own tab, served **from the extension's own
+    files — no local server needed**. This is the way to get automatic card
+    reading: open it, click **👁 Watch**, and share the poker tab/window.
+  - **🎯 HUD overlay on this tab** — floats the quick manual HUD over the
+    current page.
+- The HUD Taskbar's **CALIB** button opens Calibration Mode (see *Calibration
+  Mode & shareable presets* below) — the extension ships the same calibration
+  editor as the desktop overlay.
 - Minimal permissions: **`activeTab`, `scripting`, `storage`** — no host
   permissions, so it only injects into the tab you click on.
 - The HUD mounts inside a **Shadow DOM** (site CSS can't leak in, HUD CSS can't

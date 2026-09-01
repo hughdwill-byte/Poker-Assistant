@@ -5,7 +5,8 @@
   "description": "War-style tactical HUD overlay for the Poker Assistant study tool. Advisory only: it shows advice from your own manual/Watch inputs, never reads the poker site and never performs a poker action.",
   "permissions": ["activeTab", "scripting", "storage"],
   "action": {
-    "default_title": "Toggle Poker Assistant HUD overlay",
+    "default_title": "Poker Assistant",
+    "default_popup": "extension/popup.html",
     "default_icon": {
       "16": "extension/icons/icon16.png",
       "48": "extension/icons/icon48.png",

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Poker Assistant</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; width: 280px;
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      background:
+        repeating-linear-gradient(0deg, rgba(87,255,154,0.04) 0 1px, transparent 1px 3px),
+        #0a0e0c;
+      color: #d7e4dc;
+    }
+    header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 14px; border-bottom: 1px solid #1c2a22;
+    }
+    header .brand { color: #ffb02e; font-weight: 700; letter-spacing: 0.18em; font-size: 13px; }
+    header .dot { width: 9px; height: 9px; border-radius: 50%; background: #57ff9a; box-shadow: 0 0 6px #57ff9a; }
+    .wrap { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+    button {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+      width: 100%; text-align: left; cursor: pointer;
+      background: #0c1712; color: #d7e4dc;
+      border: 1px solid #1c2a22; border-radius: 4px; padding: 11px 12px;
+      font: inherit;
+    }
+    button:hover { border-color: #ffb02e; }
+    button .t { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+    button .s { font-size: 11px; color: #8fa89b; }
+    button .t .ic { margin-right: 7px; }
+    #btn-app { border-color: #243b30; }
+    #btn-app:hover { border-color: #57ff9a; }
+    #btn-app .t { color: #57ff9a; }
+    .note { font-size: 10.5px; color: #8fa89b; line-height: 1.45; padding: 0 2px; }
+    .warn { color: #ffb02e; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="dot" aria-hidden="true"></span>
+    <span class="brand">POKER&nbsp;ASSISTANT</span>
+  </header>
+  <div class="wrap">
+    <button id="btn-app" type="button">
+      <span class="t"><span class="ic">🖥</span>Open full app (auto-read Watch)</span>
+      <span class="s">Everything — table, Watch screen-reading, advanced EV. No server needed.</span>
+    </button>
+    <button id="btn-hud" type="button">
+      <span class="t"><span class="ic">🎯</span>HUD overlay on this tab</span>
+      <span class="s">Quick manual HUD floated over the current page.</span>
+    </button>
+    <div class="note" id="note">The full app opens in its own tab and reads cards from a
+      screen/window you choose to share — it never reads a site's code.</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
