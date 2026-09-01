@@ -299,9 +299,78 @@
     return out;
   }
 
+  // ---- default region layout (so users MOVE boxes, never redraw) -----------
+  // Starting positions for all 36 regions, normalized to the anchor. Sourced
+  // from docs/calibration-box-map.* so a fresh preset already has every box on
+  // screen to drag into place. These are approximate seeds, not final geometry.
+  var DEFAULT_LAYOUT = {
+    hero0: [0.590, 0.694, 0.028, 0.055], hero1: [0.622, 0.694, 0.028, 0.055],
+    b0: [0.455, 0.455, 0.028, 0.052], b1: [0.497, 0.455, 0.028, 0.052], b2: [0.538, 0.455, 0.028, 0.052],
+    b3: [0.578, 0.455, 0.028, 0.052], b4: [0.618, 0.451, 0.028, 0.052],
+    hero0s: [0.590, 0.752, 0.024, 0.040], hero1s: [0.622, 0.752, 0.024, 0.040],
+    b0s: [0.455, 0.508, 0.024, 0.040], b1s: [0.497, 0.508, 0.024, 0.040], b2s: [0.538, 0.508, 0.024, 0.040],
+    b3s: [0.578, 0.508, 0.024, 0.040], b4s: [0.618, 0.508, 0.024, 0.040],
+    pot: [0.549, 0.571, 0.056, 0.038], mybet: [0.549, 0.613, 0.056, 0.034],
+    mystack: [0.460, 0.801, 0.059, 0.041], tocall: [0.716, 0.867, 0.077, 0.070],
+    bet0: [0.382, 0.553, 0.042, 0.042], bet1: [0.374, 0.466, 0.042, 0.042], bet2: [0.470, 0.344, 0.042, 0.042],
+    bet3: [0.647, 0.350, 0.042, 0.042], bet4: [0.757, 0.462, 0.044, 0.045], bet5: [0.721, 0.553, 0.044, 0.045],
+    s0c: [0.372, 0.654, 0.026, 0.045], s1c: [0.410, 0.372, 0.026, 0.045], s2c: [0.540, 0.342, 0.026, 0.045],
+    s3c: [0.658, 0.359, 0.026, 0.045], s4c: [0.735, 0.395, 0.028, 0.045], s5c: [0.740, 0.650, 0.026, 0.045],
+    s0: [0.319, 0.637, 0.022, 0.041], s1: [0.320, 0.318, 0.022, 0.041], s2: [0.453, 0.222, 0.022, 0.040],
+    s3: [0.633, 0.218, 0.022, 0.040], s4: [0.769, 0.327, 0.024, 0.041], s5: [0.793, 0.635, 0.022, 0.041],
+  };
+  /** All 36 regions with their default normalized positions, ready to drag. */
+  function defaultRegions() {
+    return ALL_KEYS.map(function (k) {
+      var r = DEFAULT_LAYOUT[k] || [0.48, 0.48, 0.03, 0.04];
+      return { id: k, label: LABELS[k] || k, type: typeOfKey(k), color: colorOfKey(k),
+        x: r[0], y: r[1], w: r[2], h: r[3] };
+    });
+  }
+
+  // ---- alignment snapping (green guides for flat/vertical/right-angle) ------
+  // Given a moving rect in PIXELS, the other region rects, and the anchor (px),
+  // snap the moving rect so an edge/centre lines up with the anchor's edges or
+  // another box's edges when within `threshold` px. Returns the snapped rect
+  // plus the guide lines to draw green. Boxes are axis-aligned, so a matched
+  // guide is always perfectly horizontal ("flat") or vertical, i.e. at 90°.
+  function snapMove(rect, others, anchor, threshold) {
+    threshold = threshold == null ? 5 : threshold;
+    var candV = [], candH = [];
+    function push3(arr, a, b, c) { arr.push(a, b, c); }
+    if (anchor) { push3(candV, anchor.x, anchor.x + anchor.w / 2, anchor.x + anchor.w);
+                  push3(candH, anchor.y, anchor.y + anchor.h / 2, anchor.y + anchor.h); }
+    (others || []).forEach(function (o) {
+      push3(candV, o.x, o.x + o.w / 2, o.x + o.w);
+      push3(candH, o.y, o.y + o.h / 2, o.y + o.h);
+    });
+    var mineX = [rect.x, rect.x + rect.w / 2, rect.x + rect.w];
+    var mineY = [rect.y, rect.y + rect.h / 2, rect.y + rect.h];
+    var bestV = null, bestH = null;
+    mineX.forEach(function (mx) {
+      candV.forEach(function (cv) { var d = cv - mx; if (Math.abs(d) <= threshold && (!bestV || Math.abs(d) < Math.abs(bestV.d))) bestV = { d: d, pos: cv }; });
+    });
+    mineY.forEach(function (my) {
+      candH.forEach(function (ch) { var d = ch - my; if (Math.abs(d) <= threshold && (!bestH || Math.abs(d) < Math.abs(bestH.d))) bestH = { d: d, pos: ch }; });
+    });
+    var guides = [];
+    if (bestV) guides.push({ orient: "v", pos: bestV.pos });
+    if (bestH) guides.push({ orient: "h", pos: bestH.pos });
+    return {
+      rect: { x: rect.x + (bestV ? bestV.d : 0), y: rect.y + (bestH ? bestH.d : 0), w: rect.w, h: rect.h },
+      guides: guides,
+      snappedV: !!bestV,
+      snappedH: !!bestH,
+    };
+  }
+
   Poker.CalibrationPreset = {
     LABELS: LABELS,
     ALL_KEYS: ALL_KEYS,
+    DEFAULT_LAYOUT: DEFAULT_LAYOUT,
+    defaultRegions: defaultRegions,
+    snapMove: snapMove,
+    CATEGORY_COLOR: CATEGORY_COLOR,
     CATEGORY_COLOR: CATEGORY_COLOR,
     typeOfKey: typeOfKey,
     colorOfKey: colorOfKey,

@@ -168,6 +168,47 @@ module.exports = function (t) {
     t.ok("clampRegion keeps it inside", clamped.x + clamped.w <= 1 + 1e-9);
   })();
 
+  t.section("default region layout (move-don't-redraw)");
+  (function () {
+    var regs = CP.defaultRegions();
+    t.equal("all 36 regions seeded", regs.length, 36);
+    t.ok("every default region is on-screen [0,1]",
+      regs.every(function (r) { return r.x >= 0 && r.y >= 0 && r.x + r.w <= 1 && r.y + r.h <= 1; }));
+    t.ok("ids are unique", new Set(regs.map(function (r) { return r.id; })).size === 36);
+    var pot = regs.find(function (r) { return r.id === "pot"; });
+    t.equal("pot carries category color", pot.color, "#e6a43a");
+    t.ok("hero0 has a label", regs.find(function (r) { return r.id === "hero0"; }).label === "Your card 1");
+  })();
+
+  t.section("alignment snapping (green guides at 90°)");
+  (function () {
+    var anchor = { x: 0, y: 0, w: 1000, h: 600 };
+    // A neighbour box whose left edge is at x=300 and top at y=200.
+    var other = { x: 300, y: 200, w: 40, h: 30 };
+    // Moving box just 3px off the neighbour's left edge and top edge -> snaps.
+    var moving = { x: 303, y: 197, w: 40, h: 30 };
+    var snap = CP.snapMove(moving, [other], anchor, 6);
+    t.ok("snaps to neighbour vertical line", snap.snappedV === true);
+    t.ok("snaps to neighbour horizontal line", snap.snappedH === true);
+    t.approx("left edge aligned to 300", snap.rect.x, 300, 1e-9);
+    t.approx("top edge aligned to 200", snap.rect.y, 200, 1e-9);
+    t.ok("emits a vertical and a horizontal guide", snap.guides.length === 2);
+    t.ok("guide positions are the matched lines",
+      snap.guides.some(function (g) { return g.orient === "v" && Math.abs(g.pos - 300) < 1e-9; }) &&
+      snap.guides.some(function (g) { return g.orient === "h" && Math.abs(g.pos - 200) < 1e-9; }));
+
+    // Far from every candidate line (anchor x∈{0,500,1000}, y∈{0,300,600};
+    // other x∈{300,320,340}, y∈{200,215,230}) -> no snap, no guides.
+    var far = CP.snapMove({ x: 620, y: 420, w: 40, h: 30 }, [other], anchor, 6);
+    t.ok("no snap when outside threshold", far.snappedV === false && far.snappedH === false);
+    t.ok("no guides when not snapping", far.guides.length === 0);
+    t.approx("position unchanged when not snapping", far.rect.x, 620, 1e-9);
+
+    // Snaps a box's LEFT edge to the anchor centre (x=500).
+    var toCenter = CP.snapMove({ x: 497, y: 100, w: 40, h: 30 }, [], anchor, 6);
+    t.ok("snaps a box's left edge to the anchor centre (x=500)", Math.abs(toCenter.rect.x - 500) < 1e-9);
+  })();
+
   t.section("preset -> Watch frame regions bridge");
   (function () {
     var preset = CP.createPreset({

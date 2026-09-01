@@ -59,7 +59,7 @@
     if (legacy && Object.keys(legacy).length) {
       active = CP.migrateLegacy(legacy, { name: "Imported from Watch" });
     } else {
-      active = CP.createPreset({ name: "New preset", tableAspect: 16 / 9, fitMode: "contain", regions: [] });
+      active = CP.createPreset({ name: "New preset", tableAspect: 16 / 9, fitMode: "contain", regions: CP.defaultRegions() });
     }
     active._id = newId();
     persistActive();
@@ -136,7 +136,9 @@
       '  <span class="calib-h calib-h-se" data-dir="se"></span><span class="calib-h calib-h-sw" data-dir="sw"></span>' +
       '  <span class="calib-h calib-h-ne" data-dir="ne"></span><span class="calib-h calib-h-nw" data-dir="nw"></span>' +
       '</div>' +
-      '<div class="calib-regions"></div>';
+      '<div class="calib-regions"></div>' +
+      '<div class="calib-guide calib-guide-v" hidden></div>' +
+      '<div class="calib-guide calib-guide-h" hidden></div>';
     r.querySelector(".hud-root").appendChild(layer);
     buildToolbar(r);
     wireAnchor();
@@ -211,12 +213,12 @@
     if (act === "cancel") return exit(false);
     if (act === "fit") { active.fitMode = active.fitMode === "stretch" ? "contain" : "stretch"; persistActive(); syncToolbar(); render(); }
     if (act === "lock") { active.lockAspect = !active.lockAspect; persistActive(); syncToolbar(); }
-    if (act === "new") { active = CP.createPreset({ name: "New preset", tableAspect: 16 / 9, fitMode: "contain", regions: [] }); active._id = newId(); persistActive(); refreshPresetSelect(); anchorPx = defaultAnchor(); syncToolbar(); render(); }
+    if (act === "new") { active = CP.createPreset({ name: "New preset", tableAspect: 16 / 9, fitMode: "contain", regions: CP.defaultRegions() }); active._id = newId(); persistActive(); refreshPresetSelect(); anchorPx = defaultAnchor(); syncToolbar(); render(); }
     if (act === "dup") { var d = CP.deserialize(CP.serialize(active)); d.name = (active.name || "Preset") + " copy"; d._id = newId(); active = d; persistActive(); refreshPresetSelect(); syncToolbar(); }
     if (act === "del") {
       var map = loadPresets(); delete map[active._id]; savePresets(map);
       var ids = Object.keys(map);
-      if (ids.length) setActive(ids[0]); else { active = CP.createPreset({ name: "New preset", tableAspect: 16 / 9, fitMode: "contain", regions: [] }); active._id = newId(); persistActive(); refreshPresetSelect(); render(); }
+      if (ids.length) setActive(ids[0]); else { active = CP.createPreset({ name: "New preset", tableAspect: 16 / 9, fitMode: "contain", regions: CP.defaultRegions() }); active._id = newId(); persistActive(); refreshPresetSelect(); render(); }
     }
     if (act === "export") {
       var io = toolbar.querySelector(".calib-io"); io.hidden = false; io.value = CP.serialize(active); io.focus(); io.select();
@@ -309,12 +311,42 @@
       if (!d) return;
       var nx = d.l + (e.clientX - d.px), ny = d.t + (e.clientY - d.py);
       var w = parseFloat(el.style.width), h = parseFloat(el.style.height);
+      // Snap to the anchor's edges/centre and to any other box's edges/centre;
+      // matched lines glow green (they are always flat/vertical, i.e. at 90°).
+      var others = otherRegionRectsPx(idx);
+      var snap = CP.snapMove({ x: nx, y: ny, w: w, h: h }, others, anchorPx, 6);
+      nx = snap.rect.x; ny = snap.rect.y;
+      showGuides(snap.guides);
+      el.classList.toggle("calib-snapped", snap.snappedV || snap.snappedH);
       var norm = CP.normalize({ x: nx, y: ny, w: w, h: h }, anchorPx, { tableAspect: active.tableAspect, fitMode: active.fitMode });
       active.regions[idx].x = norm.x; active.regions[idx].y = norm.y;
       el.style.left = nx + "px"; el.style.top = ny + "px";
       el.classList.toggle("calib-region-warn", CP.regionOutOfBounds(active.regions[idx]));
     });
-    on(el, "pointerup", function (e) { d = null; try { el.releasePointerCapture(e.pointerId); } catch (x) {} });
+    on(el, "pointerup", function (e) { d = null; hideGuides(); el.classList.remove("calib-snapped"); try { el.releasePointerCapture(e.pointerId); } catch (x) {} });
+  }
+
+  // Pixel rects of every region EXCEPT the one being dragged (snap targets).
+  function otherRegionRectsPx(skipIdx) {
+    var opts = { tableAspect: active.tableAspect, fitMode: active.fitMode };
+    var out = [];
+    active.regions.forEach(function (r, i) { if (i !== skipIdx) out.push(CP.denormalize(r, anchorPx, opts)); });
+    return out;
+  }
+
+  // Green alignment guide lines, drawn full-screen along a snapped axis.
+  function showGuides(guides) {
+    if (!layer) return;
+    var v = layer.querySelector(".calib-guide-v"), h = layer.querySelector(".calib-guide-h");
+    var gv = null, gh = null;
+    (guides || []).forEach(function (g) { if (g.orient === "v") gv = g.pos; else gh = g.pos; });
+    if (v) { if (gv != null) { v.style.left = gv + "px"; v.hidden = false; } else v.hidden = true; }
+    if (h) { if (gh != null) { h.style.top = gh + "px"; h.hidden = false; } else h.hidden = true; }
+  }
+  function hideGuides() {
+    if (!layer) return;
+    var v = layer.querySelector(".calib-guide-v"), h = layer.querySelector(".calib-guide-h");
+    if (v) v.hidden = true; if (h) h.hidden = true;
   }
 
   var CALIB_CSS =
@@ -327,7 +359,10 @@
     ".calib-h-se{right:-8px;bottom:-8px;cursor:nwse-resize}.calib-h-sw{left:-8px;bottom:-8px;cursor:nesw-resize}" +
     ".calib-h-ne{right:-8px;top:-8px;cursor:nesw-resize}.calib-h-nw{left:-8px;top:-8px;cursor:nwse-resize}" +
     ".calib-region{position:absolute;border:1.5px solid #9a6fd0;background:rgba(0,0,0,.15);cursor:move;touch-action:none}" +
+    ".calib-region.calib-snapped{border-color:#57ff9a;box-shadow:0 0 8px rgba(87,255,154,.7)}" +
     ".calib-region-warn{outline:2px solid #ff6b6b}" +
+    ".calib-guide{position:absolute;background:#57ff9a;box-shadow:0 0 6px rgba(87,255,154,.8);pointer-events:none;z-index:60}" +
+    ".calib-guide-v{top:0;bottom:0;width:1px;margin-left:-0.5px}.calib-guide-h{left:0;right:0;height:1px;margin-top:-0.5px}" +
     ".calib-region-label{position:absolute;top:-13px;left:0;font:9px monospace;white-space:nowrap;text-shadow:0 0 3px #000}" +
     ".calib-toolbar{position:absolute;left:8px;right:8px;top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;" +
     "background:rgba(10,14,12,.94);border:1px solid #1c2a22;padding:8px;border-radius:4px}" +
@@ -338,8 +373,30 @@
     ".calib-btn:hover{border-color:#ffb02e;color:#ffb02e}.calib-save{border-color:#57ff9a;color:#0a0e0c;background:#57ff9a}" +
     ":host(.calib-active) .hud-box,:host(.calib-active) .hud-taskbar{opacity:.35;filter:grayscale(.4);pointer-events:none!important}";
 
-  // ---- receive hotkey from main + expose API ------------------------------
+  // ---- receive hotkey from main (desktop) ----------------------------------
   if (api && api.onHotkey) api.onHotkey(function (name) { if (name === "calibration") toggle(); });
+
+  // ---- self-install a CALIB button on the shared HUD taskbar ---------------
+  // Works in BOTH the browser extension and the desktop overlay: the HUD's
+  // Taskbar is the same in both, so calibration registers its own control
+  // rather than each host having to add it.
+  function installButton(tries) {
+    var r = root();
+    var btns = r && r.querySelector(".hud-taskbar-btns");
+    if (!btns) { if ((tries || 0) < 60) setTimeout(function () { installButton((tries || 0) + 1); }, 50); return; }
+    if (btns.querySelector("[data-calib-btn]")) return;
+    var b = document.createElement("button");
+    b.className = "hud-btn"; b.type = "button"; b.setAttribute("data-calib-btn", "1");
+    b.textContent = "CALIB";
+    b.title = "Calibration Mode — move the table anchor + region boxes into place";
+    b.setAttribute("aria-label", b.title);
+    b.addEventListener("click", toggle);
+    // Put CALIB just before the desktop EXIT/close button when present.
+    var close = btns.querySelector(".hud-btn-close");
+    if (close) btns.insertBefore(b, close); else btns.appendChild(b);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { installButton(0); });
+  else installButton(0);
 
   window.PokerCalibration = {
     enter: enter, exit: exit, toggle: toggle,

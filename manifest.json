@@ -26,7 +26,9 @@
         "js/*.js",
         "extension/hud.js",
         "extension/hud-layout.js",
-        "extension/hud.css"
+        "extension/hud.css",
+        "extension/calibration-toggle.js",
+        "extension/calibration-layer.js"
       ],
       "matches": ["<all_urls>"]
     }
