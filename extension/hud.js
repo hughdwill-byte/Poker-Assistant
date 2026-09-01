@@ -436,13 +436,17 @@
         renderIntel(msg.result);
       };
       HUD.worker.onerror = function () {
+        // Worker blocked (typically the page's CSP). Fall back to computing
+        // in-page if the engine is present; otherwise say so.
         HUD.worker = null;
-        renderIntelError("Equity engine could not start on this page (worker blocked by page policy). Layout and controls still work.");
+        if (hasInPageEngine()) compute();
+        else renderIntelError("Equity engine could not start on this page. Layout and controls still work.");
       };
       HUD.cleanup.push(function () { if (HUD.worker) { HUD.worker.terminate(); HUD.worker = null; } });
     } catch (err) {
+      // new Worker() can throw synchronously under a strict page CSP — the
+      // in-page fallback (used by compute) handles it, so don't alarm the user.
       HUD.worker = null;
-      renderIntelError("Equity engine unavailable here: " + (err && err.message || err));
     }
   }
 
@@ -489,17 +493,44 @@
       warn.push("Board should be 0, 3, 4 or 5 cards; extra cards ignored in the felt.");
     }
 
-    if (!HUD.worker) { renderIntelError("Equity engine unavailable on this page."); return; }
-
     var players = [{ cards: st.hero.ids, active: true }];
     for (var i = 1; i < st.players; i++) players.push({ active: true });
     var board = st.board.ids.slice(0, 5);
     var cfg = { players: players, board: board, decks: 1, dead: [], trials: 40000 };
     HUD.jobId += 1;
     setStatusLight("busy");
-    HUD.worker.postMessage({ id: HUD.jobId, type: "simulate", cfg: cfg });
-    // stash the input state for renderIntel to combine with the worker result
+    // stash the input state for renderIntel to combine with the result
     HUD._pending = { state: st, warnings: warn };
+    dispatchSim(cfg);
+  }
+
+  // True when the equity engine is loaded into THIS world (the extension injects
+  // it so equity works even where a Web Worker is blocked by the page's CSP).
+  function hasInPageEngine() { return !!(self.Poker && typeof self.Poker.simulate === "function"); }
+
+  // Compute equity via the Web Worker when available; otherwise fall back to an
+  // in-page computation in the extension's isolated world, which the page's CSP
+  // cannot block. Both paths honour the latest-job id (stale-job cancellation).
+  function dispatchSim(cfg) {
+    var jid = HUD.jobId;
+    if (HUD.worker) {
+      try { HUD.worker.postMessage({ id: jid, type: "simulate", cfg: cfg }); return; }
+      catch (e) { HUD.worker = null; }
+    }
+    if (hasInPageEngine()) {
+      // Defer so the "busy" light paints first; simulate is fast (~tens of ms).
+      setTimeout(function () {
+        if (jid !== HUD.jobId) return; // a newer job superseded this one
+        var t0 = Date.now(), res;
+        try { res = self.Poker.simulate(cfg); }
+        catch (e) { res = { ok: false, error: String(e && e.message || e) }; }
+        if (res && typeof res === "object") res.ms = Date.now() - t0;
+        HUD.lastResult = res;
+        renderIntel(res);
+      }, 0);
+      return;
+    }
+    renderIntelError("Equity engine unavailable on this page.");
   }
 
   // ================= rendering =============================================

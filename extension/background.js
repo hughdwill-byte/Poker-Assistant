@@ -39,6 +39,11 @@ chrome.action.onClicked.addListener(function (tab) {
         "extension/hud-layout.js",
         "extension/calibration-toggle.js",
         "js/calibration-preset.js",
+        // Equity engine loaded into the isolated content-script world so the HUD
+        // can compute in-page when the page's CSP blocks a Web Worker.
+        "js/cards.js",
+        "js/evaluator.js",
+        "js/equity.js",
         "extension/hud.js",
         "extension/calibration-layer.js",
       ],
