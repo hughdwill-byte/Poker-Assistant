@@ -289,7 +289,9 @@ AA** contrast.
 ### Install & architecture
 - `chrome://extensions` → **Developer mode** → **Load unpacked** → pick the repo
   root (the folder with `manifest.json`). Click the amber reticle icon on any
-  page to toggle the HUD.
+  page to toggle the HUD. The HUD Taskbar's **CALIB** button opens Calibration
+  Mode (see *Calibration Mode & shareable presets* below) — the extension now
+  ships the same calibration editor as the desktop overlay.
 - Minimal permissions: **`activeTab`, `scripting`, `storage`** — no host
   permissions, so it only injects into the tab you click on.
 - The HUD mounts inside a **Shadow DOM** (site CSS can't leak in, HUD CSS can't
@@ -358,12 +360,22 @@ AppImage/zip). See **[desktop/README.md](desktop/README.md)**.
   contains Watch-mode screen reading); a **◄ HUD** button returns to the overlay.
 
 ### Calibration Mode & shareable presets
-Watch-mode calibration is a **default-OFF, toggleable editing layer** inside the
-overlay — the clean HUD is all you see until you ask for it.
+Watch-mode calibration is a **default-OFF, toggleable editing layer** available in
+**both the desktop overlay and the browser extension** (the same HUD renders in
+each) — the clean HUD is all you see until you ask for it.
 
-- **Toggle:** the Taskbar **CALIB** button or **`Ctrl/Cmd+Shift+C`**. When ON the
-  HUD dims and an editing layer appears; **DONE · SAVE & HIDE** returns to the
-  clean HUD, **ESC** exits without saving. It boots OFF every launch.
+- **Toggle:** the Taskbar **CALIB** button (both surfaces) or **`Ctrl/Cmd+Shift+C`**
+  in the desktop overlay. When ON the HUD dims and an editing layer appears;
+  **DONE · SAVE & HIDE** returns to the clean HUD, **ESC** exits without saving.
+  It boots OFF every launch.
+- **Move, don't redraw:** a fresh preset already contains **all 36 region boxes**
+  in sensible starting positions — you **drag them into place** (and resize)
+  rather than tracing each one. Existing edits reload, so you never start over.
+- **Green alignment guides (90°):** while you drag a box, if an edge or centre
+  lines up (within a few px) with the table anchor or another box, a **bright
+  green guide line** appears and the box snaps to it — the guide is always
+  perfectly flat or vertical, so rows and columns line up squarely for maximum
+  accuracy. The box glows green while snapped; the guide clears on release.
 - **Anchor model (resolution-independent):** you place **one anchor rectangle** =
   the poker-table bounding box. Every region (seat spot/cards/bet, board + suits,
   hero + suits, pot/stack/to-call/my-bet) is stored **normalized `{x,y,w,h}` in
@@ -384,7 +396,7 @@ overlay — the clean HUD is all you see until you ask for it.
   (`Poker.CalibrationPreset`), consumable by **both** the web Watch reader (via
   `presetToFrameRegions`) and the overlay; unit-tested
   (`test/calibration-preset.test.js`). The OFF/ON state machine is
-  `desktop/calibration-toggle.js` (`test/calibration-toggle.test.js`). An example
+  `extension/calibration-toggle.js` (`test/calibration-toggle.test.js`). An example
   region map is in [`docs/calibration-box-map.json`](docs/calibration-box-map.json).
 
 ### Data flow

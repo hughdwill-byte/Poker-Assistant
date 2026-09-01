@@ -35,7 +35,13 @@ chrome.action.onClicked.addListener(function (tab) {
   chrome.scripting
     .executeScript({
       target: { tabId: tab.id },
-      files: ["extension/hud-layout.js", "extension/hud.js"],
+      files: [
+        "extension/hud-layout.js",
+        "extension/calibration-toggle.js",
+        "js/calibration-preset.js",
+        "extension/hud.js",
+        "extension/calibration-layer.js",
+      ],
     })
     .then(function () {
       return chrome.scripting.executeScript({

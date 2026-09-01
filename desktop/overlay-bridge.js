@@ -83,9 +83,6 @@
     mkBtn("DISPLAY", "Move the overlay to the next monitor", function () {
       if (api) api.cycleDisplay();
     });
-    mkBtn("CALIB", "Toggle Calibration Mode (edit the table anchor + regions)", function () {
-      if (window.PokerCalibration) window.PokerCalibration.toggle();
-    });
     mkBtn("WATCH", "Open the full app (with Watch-mode screen reading)", function () {
       if (api) api.toggleAppView();
     });
