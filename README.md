@@ -406,6 +406,12 @@ each) — the clean HUD is all you see until you ask for it.
 - **Migration:** an existing Watch calibration (`pokerwatch.regions.v1`) is
   converted to a normalized preset on first open (anchor inferred from region
   bounds) — nothing is lost.
+- **In Watch mode too:** the full app's **👁 Watch** panel has a **📐 Box
+  editor** button that overlays this *same* move/resize/green-guide editor on the
+  live capture. Place the green **table anchor** over the table once (your HUD
+  preset's boxes come with it), fine-tune, and **Save & Use** — it writes
+  frame-normalized regions the reader uses. One calibration system for the HUD
+  and Watch (`js/watch-calibrator.js`, reusing `Poker.CalibrationPreset`).
 - **Shared model:** the pure coordinate math is `js/calibration-preset.js`
   (`Poker.CalibrationPreset`), consumable by **both** the web Watch reader (via
   `presetToFrameRegions`) and the overlay; unit-tested

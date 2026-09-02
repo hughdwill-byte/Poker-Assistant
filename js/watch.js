@@ -1389,8 +1389,9 @@
     el.share = mkbtn("Share a tab / window", startShare, "primary");
     el.stop = mkbtn("Stop", stopStream);
     el.calib = mkbtn("Calibrate", toggleCalibrate);
+    el.boxedit = mkbtn("📐 Box editor", openVisualCalibrator);
     el.watch = mkbtn("Start watching", toggleWatch, "primary");
-    [el.share, el.stop, el.calib, el.watch].forEach(function (b) { bar.appendChild(b); });
+    [el.share, el.stop, el.calib, el.boxedit, el.watch].forEach(function (b) { bar.appendChild(b); });
     modal.appendChild(bar);
 
     el.status = h("div", "watch-status", "Share a tab or window to begin.");
@@ -1691,6 +1692,52 @@
     el.watch.disabled = !stream;
   }
   function toggleCalibrate() { calibrating = !calibrating; if (!calibrating) { selectedKey = null; cancelPoly(); } updateButtons(); drawOverlay(); setStatus(calibrating ? "Pick a box below, then click its corners to trace it." : "Calibration off."); }
+
+  // Visual box editor: overlay the improved anchor + move/resize/green-guide
+  // editor (shared with the HUD's Calibration Mode) on the live capture and
+  // write frame-normalized regions Watch reads from. Reuses your saved HUD
+  // preset if one exists; place the table anchor over the table once and every
+  // box lands, then fine-tune.
+  function openVisualCalibrator() {
+    var WC = window.Poker && window.Poker.WatchCalibrator;
+    var CPmod = window.Poker && window.Poker.CalibrationPreset;
+    if (!WC || !CPmod) { setStatus("Visual editor unavailable (calibration modules not loaded)."); return; }
+    if (!stream) { setStatus("Share a tab or window first, then open the Box editor."); return; }
+    // Prefer the active HUD preset; else migrate current boxes; else defaults.
+    var preset = null;
+    try {
+      var map = JSON.parse(localStorage.getItem("pokerHud.presets") || "{}");
+      var id = localStorage.getItem("pokerHud.activePreset");
+      if (id && map[id]) preset = CPmod.deserialize(map[id]);
+    } catch (e) {}
+    if (!preset || !preset.regions || !preset.regions.length) {
+      if (regions && Object.keys(regions).length) preset = CPmod.migrateLegacy(regions, { name: "From Watch boxes" });
+    }
+    if (!preset || !preset.regions || !preset.regions.length) {
+      preset = CPmod.createPreset({ name: "Watch preset", tableAspect: 16 / 9, fitMode: "contain", regions: CPmod.defaultRegions() });
+    }
+    calibrating = false; updateButtons();
+    WC.open(el.stage, video, {
+      preset: preset,
+      onSave: function (frameRegions) { applyFrameRegions(frameRegions); },
+    });
+    setStatus("Drag the green TABLE ANCHOR over the poker table; nudge any box; then Save & Use.");
+  }
+
+  // Merge frame-normalized regions from the visual editor into Watch's store.
+  function applyFrameRegions(fr) {
+    if (!fr) return;
+    Object.keys(fr).forEach(function (key) {
+      var r = fr[key];
+      if (r && isFinite(r.x) && isFinite(r.y) && isFinite(r.w) && isFinite(r.h)) {
+        regions[key] = { x: r.x, y: r.y, w: r.w, h: r.h };
+      }
+    });
+    saveJSON(LS_REGIONS, regions);
+    if (typeof refreshChips === "function") refreshChips();
+    if (typeof drawOverlay === "function") drawOverlay();
+    setStatus("Boxes saved from the visual editor. Click Start watching to read the table.");
+  }
   function toggleWatch() { if (watching) pauseWatching(); else startWatching(); }
 
   function refreshChips() {
@@ -2262,5 +2309,7 @@
     _setWatching: function (v) { watching = v; }, _open: openModal, _close: closeModal,
     _useStream: function (s) { if (!el.overlay) buildModal(); stream = s; video.srcObject = s; video.play(); },
     _start: startWatching, _videoParent: function () { return video && video.parentNode ? video.parentNode.className : null; },
+    _openVisualCalibrator: openVisualCalibrator,
+    _reloadRegions: function () { regions = loadJSON(LS_REGIONS, {}); if (typeof drawOverlay === "function") drawOverlay(); },
   };
 })();

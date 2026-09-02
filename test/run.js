@@ -29,6 +29,7 @@ var suites = [
   "./calibration-preset.test",
   "./calibration-toggle.test",
   "./live-bridge.test",
+  "./watch-calibrator.test",
 ];
 
 suites.forEach(function (name) {
