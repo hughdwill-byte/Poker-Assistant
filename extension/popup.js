@@ -44,6 +44,7 @@ document.getElementById("btn-hud").addEventListener("click", function () {
           "js/cards.js",
           "js/evaluator.js",
           "js/equity.js",
+          "js/live-bridge.js",
           "extension/hud.js",
           "extension/calibration-layer.js",
         ],

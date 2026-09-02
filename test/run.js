@@ -28,6 +28,7 @@ var suites = [
   "./overlay-logic.test",
   "./calibration-preset.test",
   "./calibration-toggle.test",
+  "./live-bridge.test",
 ];
 
 suites.forEach(function (name) {
