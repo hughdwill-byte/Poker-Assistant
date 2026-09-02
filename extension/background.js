@@ -44,6 +44,7 @@ chrome.action.onClicked.addListener(function (tab) {
         "js/cards.js",
         "js/evaluator.js",
         "js/equity.js",
+        "js/live-bridge.js",
         "extension/hud.js",
         "extension/calibration-layer.js",
       ],

@@ -398,6 +398,25 @@
   function scheduleCompute() {
     if (computeTimer) clearTimeout(computeTimer);
     computeTimer = setTimeout(compute, 140);
+    publishLive();
+  }
+
+  // Broadcast the current table to any listening HUD (e.g. the overlay on a
+  // second monitor). Fires on every change — Watch-read or manual. Advisory-only
+  // data (cards/pot the user is already looking at); no site data is involved.
+  function publishLive() {
+    if (!P.LiveBridge) return;
+    var hero = state.players[state.heroIndex] || { cards: [], stack: 0 };
+    try {
+      P.LiveBridge.publish({
+        hero: P.LiveBridge.idsToText(hero.cards),
+        board: P.LiveBridge.idsToText(state.board),
+        players: state.numPlayers,
+        pot: state.pot,
+        toCall: state.toCall,
+        stack: hero.stack,
+      });
+    } catch (e) { /* best-effort */ }
   }
   function scheduleAndRender() { render(); scheduleCompute(); }
 

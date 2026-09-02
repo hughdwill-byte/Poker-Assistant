@@ -183,6 +183,8 @@
 .hud-btn:focus-visible { outline: 2px solid var(--hud-amber); outline-offset: 1px; }
 .hud-btn-close { border-color: #6a2016; color: var(--hud-red); }
 .hud-btn-close:hover { background: #2a0d09; border-color: var(--hud-red); color: #fff; }
+.hud-btn-live { border-color: var(--hud-go); color: #0a0e0c; background: var(--hud-go); }
+.hud-btn-live:hover { background: #7dffb3; color: #0a0e0c; }
 
 /* ---- resize handles ------------------------------------------------------ */
 .hud-handle { position: absolute; pointer-events: auto; touch-action: none; }

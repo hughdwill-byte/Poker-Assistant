@@ -148,6 +148,7 @@
       HUD.layout = HL.clampLayout(loaded, vp);
       applyLayout();
       startWorker();
+      startLive();
       compute();
     });
 
@@ -261,6 +262,13 @@
     tbtn(group, "RESET", "Reset the panel layout to defaults", function () {
       HUD.layout = HL.defaultLayout(viewport());
       applyLayout(); persist(); reflow("table"); reflow("info");
+    });
+    // LIVE: receive the table from the Watch app (even on another tab/monitor).
+    HUD.liveBtn = tbtn(group, "LIVE ◎", "Auto-fill from the Watch app (works across tabs/monitors)", function () {
+      HUD.liveOn = !HUD.liveOn;
+      try { (self.localStorage) && localStorage.setItem("pokerHud.liveOn", HUD.liveOn ? "1" : "0"); } catch (e) {}
+      reflectLive();
+      if (HUD.liveOn) primeLive();
     });
     var close = tbtn(group, "✕ CLOSE", "Close the HUD and restore the page (Esc)", function () { unmount(); });
     close.classList.add("hud-btn-close");
@@ -448,6 +456,50 @@
       // in-page fallback (used by compute) handles it, so don't alarm the user.
       HUD.worker = null;
     }
+  }
+
+  // ================= LIVE link (receive the table from the Watch app) =======
+  function startLive() {
+    var LB = self.Poker && self.Poker.LiveBridge;
+    if (!LB) return;
+    // Default ON so an already-running Watch app auto-fills the HUD.
+    var saved = null;
+    try { saved = self.localStorage ? localStorage.getItem("pokerHud.liveOn") : null; } catch (e) {}
+    HUD.liveOn = saved == null ? true : saved === "1";
+    reflectLive();
+    var unsub = LB.subscribe(function (snap) { if (HUD.liveOn) applyLiveSnapshot(snap); });
+    HUD.cleanup.push(unsub);
+    primeLive();
+  }
+  function primeLive() {
+    var LB = self.Poker && self.Poker.LiveBridge;
+    if (!LB || !HUD.liveOn) return;
+    LB.getLatest(function (snap) { if (snap && HUD.liveOn) applyLiveSnapshot(snap); });
+  }
+  function reflectLive() {
+    if (!HUD.liveBtn) return;
+    HUD.liveBtn.textContent = HUD.liveOn ? "LIVE ●" : "LIVE ◎";
+    HUD.liveBtn.classList.toggle("hud-btn-live", !!HUD.liveOn);
+    HUD.liveBtn.title = HUD.liveOn
+      ? "Receiving from the Watch app — click to stop auto-fill"
+      : "Auto-fill from the Watch app (works across tabs/monitors) — click to enable";
+  }
+  // Drop a received snapshot into the inputs and recompute. Only overwrites a
+  // field when the snapshot actually carries it, so it won't wipe manual entries.
+  function applyLiveSnapshot(snap) {
+    if (!snap || !HUD.mounted) return;
+    var changed = false;
+    if (snap.hero && HUD.inputs.hero.value !== snap.hero) { HUD.inputs.hero.value = snap.hero; changed = true; }
+    if (HUD.inputs.board.value !== (snap.board || "")) { HUD.inputs.board.value = snap.board || ""; changed = true; }
+    if (snap.players && String(snap.players) !== HUD.inputs.players.value) { HUD.inputs.players.value = String(snap.players); changed = true; }
+    if (String(snap.pot) !== HUD.inputs.pot.value) { HUD.inputs.pot.value = String(snap.pot); changed = true; }
+    if (String(snap.toCall) !== HUD.inputs.call.value) { HUD.inputs.call.value = String(snap.toCall); changed = true; }
+    if (snap.stack && String(snap.stack) !== HUD.inputs.stack.value) { HUD.inputs.stack.value = String(snap.stack); changed = true; }
+    if (changed) { setLiveStamp(); compute(); }
+  }
+  function setLiveStamp() {
+    var el = HUD.root && HUD.root.getElementById("hud-status-light");
+    if (el) el.setAttribute("data-live", "1");
   }
 
   function readInputs() {

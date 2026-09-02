@@ -42,4 +42,7 @@ require("../extension/calibration-toggle.js");
 // Shared resolution-independent calibration model (web Watch + desktop overlay).
 require("../js/calibration-preset.js");
 
+// Cross-tab/monitor live table bridge (Watch app -> HUD).
+require("../js/live-bridge.js");
+
 module.exports = global.Poker;

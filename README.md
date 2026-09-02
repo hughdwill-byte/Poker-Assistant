@@ -300,6 +300,12 @@ AA** contrast.
 - The HUD Taskbar's **CALIB** button opens Calibration Mode (see *Calibration
   Mode & shareable presets* below) — the extension ships the same calibration
   editor as the desktop overlay.
+- **LIVE link (two-monitor / two-tab):** the HUD Taskbar's **LIVE** button (on by
+  default) makes the overlay HUD **auto-fill from the full app across tabs and
+  monitors**. Run the full app (with Watch reading) on one monitor and the HUD
+  over your poker table on another; as the app reads the table, the cards, pot
+  and player count flow to the HUD live over `chrome.storage.local`. It carries
+  only the advisory table state you're already looking at — no site data.
 - Minimal permissions: **`activeTab`, `scripting`, `storage`** — no host
   permissions, so it only injects into the tab you click on.
 - The HUD mounts inside a **Shadow DOM** (site CSS can't leak in, HUD CSS can't
